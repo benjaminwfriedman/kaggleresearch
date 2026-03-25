@@ -53,7 +53,17 @@ class CheckpointState:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CheckpointState":
-        """Create from dictionary."""
+        """Create from dictionary, handling missing fields for backward compatibility."""
+        # Add default values for fields that may not exist in old checkpoints
+        defaults = {
+            'run_id': '',
+            'current_node_id': '',
+            'exploration_mode': 'df',
+            'competition_meta': {},
+        }
+        for key, default_val in defaults.items():
+            if key not in data:
+                data[key] = default_val
         return cls(**data)
 
 

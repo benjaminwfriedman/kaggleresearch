@@ -94,10 +94,20 @@ def render_live_table(
         duration = exp.get('duration_seconds', 0)
         duration_str = f"{duration:.1f}s" if duration < 60 else f"{duration/60:.1f}m"
 
+        # For crashed experiments, show error in title tooltip
+        idea_title = exp.get('idea_title', 'Unknown')[:40]
+        error_msg = exp.get('error_message', '')
+        if status == 'crashed' and error_msg:
+            # Truncate error for tooltip and escape HTML
+            error_preview = error_msg[:200].replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
+            title_cell = f'<span title="{error_preview}" style="cursor:help">{idea_title}</span>'
+        else:
+            title_cell = idea_title
+
         html += f"""
         <tr class="{css_class}">
             <td>{i}</td>
-            <td>{exp.get('idea_title', 'Unknown')[:40]}</td>
+            <td>{title_cell}</td>
             <td>{status}</td>
             <td>{f'{score:.6f}' if score else 'N/A'}</td>
             <td>{delta_str}</td>
@@ -218,7 +228,27 @@ def render_summary(
 | No Improvement | {no_improvement} |
 | Crashed | {crashed} |
 
-## Strategy Timeline
+"""
+
+    # Show crashed experiments with errors
+    crashed_exps = [e for e in experiments if e.get('status') == 'crashed']
+    if crashed_exps:
+        md += "### Crash Details\n\n"
+        md += "| Idea | Error |\n"
+        md += "|------|-------|\n"
+        for exp in crashed_exps[-10:]:  # Show last 10 crashes
+            idea = exp.get('idea_title', 'Unknown')[:30]
+            error = exp.get('error_message', 'Unknown error')
+            # Truncate and escape error for table
+            error_short = error[:80].replace('|', '\\|').replace('\n', ' ')
+            if len(error) > 80:
+                error_short += '...'
+            md += f"| {idea} | {error_short} |\n"
+        md += "\n"
+
+    md += """## Strategy Timeline
+
+
 
 """
 
