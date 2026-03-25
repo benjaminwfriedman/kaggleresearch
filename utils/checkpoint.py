@@ -44,6 +44,8 @@ class CheckpointState:
     run_id: str = ""  # Unique ID for this research run (e.g., "run-001")
     current_node_id: str = ""  # Current position in idea tree
     exploration_mode: str = "df"  # "df" (depth-first) or "bf" (breadth-first)
+    # Competition metadata (name, metric, metric_direction)
+    competition_meta: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -123,7 +125,8 @@ def create_initial_checkpoint(
     problem_type: str,
     baseline_score: float,
     run_id: str = "",
-    exploration_mode: str = "df"
+    exploration_mode: str = "df",
+    competition_meta: Optional[Dict[str, Any]] = None
 ) -> CheckpointState:
     """
     Create initial checkpoint after bootstrap phase.
@@ -134,6 +137,7 @@ def create_initial_checkpoint(
         baseline_score: Score from baseline model
         run_id: Unique ID for this research run
         exploration_mode: "df" (depth-first) or "bf" (breadth-first)
+        competition_meta: Competition metadata (name, metric, metric_direction)
 
     Returns:
         New CheckpointState ready for literature phase
@@ -146,6 +150,7 @@ def create_initial_checkpoint(
         best_score=baseline_score,
         run_id=run_id,
         exploration_mode=exploration_mode,
+        competition_meta=competition_meta or {},
     )
 
 

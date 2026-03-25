@@ -158,8 +158,8 @@ def run_reresearch(
     ]
     failure_summary = summarise_failures(exp_results)
 
-    checkpoint_dict = checkpoint.to_dict()
-    comp_meta = checkpoint_dict.get('competition_meta', {})
+    # Get competition metadata from checkpoint
+    comp_meta = checkpoint.competition_meta or {}
 
     with open(config.strategy_path, 'r') as f:
         strategy_md = f.read()
@@ -228,7 +228,12 @@ def run_reresearch(
         new_ideas = generate_ideas_md(
             papers_summary=papers_summary,
             strategy_md=result.pivot_strategy_md,
-            competition_meta={'name': comp_meta.get('name'), 'problem_type': checkpoint.problem_type},
+            competition_meta={
+                'name': comp_meta.get('name') or checkpoint.competition_slug,
+                'problem_type': checkpoint.problem_type,
+                'metric': comp_meta.get('metric') or 'accuracy',
+                'metric_direction': comp_meta.get('metric_direction') or 'higher_better',
+            },
             baseline_score=checkpoint.baseline_score,
             client=client
         )
