@@ -118,7 +118,8 @@ Return ONLY the complete modified train.py file. No explanations, no markdown fe
 def validate_patch(
     repo_path: Path,
     patched_train_py: str,
-    original_metric_py_hash: Optional[str] = None
+    original_metric_py_hash: Optional[str] = None,
+    original_train_py: Optional[str] = None
 ) -> Tuple[bool, str]:
     """
     Validate that a patch doesn't violate constraints.
@@ -127,17 +128,41 @@ def validate_patch(
         repo_path: Path to the repo
         patched_train_py: New train.py content
         original_metric_py_hash: Hash of original metric.py
+        original_train_py: Original train.py content for comparison
 
     Returns:
         Tuple of (is_valid, error_message)
     """
     repo_path = Path(repo_path)
 
+    # Check for truncated response (common LLM failure mode)
+    if len(patched_train_py) < 500:
+        return False, "Generated code is too short - likely truncated"
+
+    # Check that response contains essential parts
+    required_patterns = ['def main(', 'if __name__']
+    for pattern in required_patterns:
+        if pattern not in patched_train_py:
+            return False, f"Missing required pattern: {pattern}"
+
+    # Check for incomplete lines (truncation indicator)
+    lines = patched_train_py.split('\n')
+    for i, line in enumerate(lines[-5:]):  # Check last 5 lines
+        stripped = line.rstrip()
+        if stripped and not stripped.endswith((':',')',')',']','}','"',"'",'#','\\',',')):
+            # Line doesn't end with a valid Python line ending
+            if stripped.endswith('.') or stripped.endswith('str.e'):
+                return False, f"Code appears truncated at line {len(lines)-5+i}"
+
     # Check syntax by compiling
     try:
         compile(patched_train_py, '<train.py>', 'exec')
     except SyntaxError as e:
         return False, f"Syntax error in train.py: {e}"
+
+    # If we have original, check it's not drastically shorter
+    if original_train_py and len(patched_train_py) < len(original_train_py) * 0.5:
+        return False, "Generated code is less than 50% of original length"
 
     # Check that metric.py wasn't modified
     metric_path = repo_path / 'metric.py'
@@ -159,6 +184,34 @@ def validate_patch(
             return False, f"Forbidden import: {forbidden} requires pip install"
 
     return True, ""
+
+
+def backup_train_py(repo_path: Path) -> str:
+    """Backup current train.py and return its content."""
+    train_path = Path(repo_path) / 'train.py'
+    backup_path = Path(repo_path) / 'train.py.backup'
+
+    with open(train_path, 'r') as f:
+        content = f.read()
+
+    with open(backup_path, 'w') as f:
+        f.write(content)
+
+    return content
+
+
+def restore_train_py(repo_path: Path) -> bool:
+    """Restore train.py from backup."""
+    train_path = Path(repo_path) / 'train.py'
+    backup_path = Path(repo_path) / 'train.py.backup'
+
+    if backup_path.exists():
+        with open(backup_path, 'r') as f:
+            content = f.read()
+        with open(train_path, 'w') as f:
+            f.write(content)
+        return True
+    return False
 
 
 def run_experiment(
