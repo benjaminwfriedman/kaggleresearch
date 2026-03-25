@@ -90,6 +90,22 @@ Option 2 (Environment variables):
 """
 
 
+def _setup_kaggle_credentials():
+    """Ensure Kaggle credentials are set up before API calls."""
+    kaggle_dir = Path.home() / '.kaggle'
+    kaggle_json = kaggle_dir / 'kaggle.json'
+
+    # If credentials file doesn't exist but env vars are set, create it
+    username = os.environ.get('KAGGLE_USERNAME')
+    key = os.environ.get('KAGGLE_KEY')
+
+    if username and key and not kaggle_json.exists():
+        kaggle_dir.mkdir(parents=True, exist_ok=True)
+        with open(kaggle_json, 'w') as f:
+            json.dump({'username': username, 'key': key}, f)
+        kaggle_json.chmod(0o600)
+
+
 def parse_competition(url: str) -> CompetitionMeta:
     """
     Parse competition metadata from Kaggle API.
@@ -100,6 +116,7 @@ def parse_competition(url: str) -> CompetitionMeta:
     Returns:
         CompetitionMeta with competition details
     """
+    _setup_kaggle_credentials()
     from kaggle.api.kaggle_api_extended import KaggleApi
 
     slug = extract_slug_from_url(url)
@@ -208,6 +225,7 @@ def download_competition_data(slug: str, data_dir: Path) -> List[str]:
     Returns:
         List of downloaded file paths
     """
+    _setup_kaggle_credentials()
     from kaggle.api.kaggle_api_extended import KaggleApi
 
     data_dir = Path(data_dir)
