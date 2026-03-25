@@ -327,12 +327,19 @@ def handle_reresearch_result(
     from .strategy import append_ideas_to_file, archive_strategy
 
     if result.outcome == "new_ideas" and result.new_ideas_md:
-        # Append new ideas to existing file
-        append_ideas_to_file(ideas_path, result.new_ideas_md)
-        return {
-            "action": "continue_exploit",
-            "message": "Added new ideas from re-research. Continuing exploit phase.",
-        }
+        # Append new ideas to existing file (with sanitization)
+        num_added = append_ideas_to_file(ideas_path, result.new_ideas_md)
+        if num_added > 0:
+            return {
+                "action": "continue_exploit",
+                "message": f"Added {num_added} new ideas from re-research. Continuing exploit phase.",
+            }
+        else:
+            # Sanitization failed to extract valid ideas
+            return {
+                "action": "halt",
+                "message": "Re-research returned content but no valid ideas could be parsed.",
+            }
 
     elif result.outcome == "pivot" and result.pivot_strategy_md:
         # Archive current strategy

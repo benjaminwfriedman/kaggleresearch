@@ -329,24 +329,150 @@ def count_ideas_by_status(ideas: List[Idea]) -> Dict[str, int]:
     return counts
 
 
-def append_ideas_to_file(path: Path, new_ideas_md: str) -> None:
+def sanitize_idea_block(block: str) -> Optional[str]:
     """
-    Append new ideas to existing IDEAS.md file.
+    Sanitize an idea block to ensure proper IDEAS.md format.
+
+    Args:
+        block: Raw idea text that may be malformed
+
+    Returns:
+        Properly formatted idea block or None if unfixable
+    """
+    if not block.strip():
+        return None
+
+    lines = block.strip().split('\n')
+
+    # Extract title - look for ## IDEA: or **IDEA:** or just a title-like first line
+    title = None
+    title_line_idx = -1
+
+    for i, line in enumerate(lines):
+        if line.startswith('## IDEA:'):
+            title = line.replace('## IDEA:', '').strip()
+            title_line_idx = i
+            break
+        elif '**IDEA:' in line or '**Idea:' in line:
+            # Convert markdown bold to proper format
+            title = re.sub(r'\*\*[Ii]dea:\*?\*?\s*', '', line).strip()
+            title_line_idx = i
+            break
+        elif i == 0 and line.strip() and not line.startswith('#'):
+            # First line might be title without formatting
+            title = line.strip().rstrip(':')
+            title_line_idx = i
+            break
+
+    if not title:
+        return None
+
+    # Build the rest of the content
+    rest_content = '\n'.join(lines[title_line_idx + 1:]) if title_line_idx >= 0 else '\n'.join(lines[1:])
+
+    # Check for required fields, extract or add defaults
+    source = "re-research"
+    risk = "medium"
+    gain = "medium"
+
+    source_match = re.search(r'[Ss]ource:\s*(.+)', rest_content)
+    if source_match:
+        source = source_match.group(1).strip()
+
+    risk_match = re.search(r'[Rr]isk:\s*(\w+)', rest_content)
+    if risk_match:
+        risk = risk_match.group(1).strip().lower()
+
+    gain_match = re.search(r'[Ee]stimated [Gg]ain:\s*(\w+)', rest_content)
+    if gain_match:
+        gain = gain_match.group(1).strip().lower()
+
+    # Extract hypothesis, implementation, validation
+    hypothesis = ""
+    implementation = ""
+    validation = ""
+
+    # Try various formats for these fields
+    hyp_match = re.search(r'[Hh]ypothesis:\s*(.+?)(?=[Ii]mplementation:|$)', rest_content, re.DOTALL)
+    if hyp_match:
+        hypothesis = hyp_match.group(1).strip()
+
+    impl_match = re.search(r'[Ii]mplementation:\s*(.+?)(?=[Vv]alidation:|$)', rest_content, re.DOTALL)
+    if impl_match:
+        implementation = impl_match.group(1).strip()
+
+    val_match = re.search(r'[Vv]alidation:\s*(.+?)$', rest_content, re.DOTALL)
+    if val_match:
+        validation = val_match.group(1).strip()
+
+    # If we couldn't extract structured fields, use the whole content as implementation
+    if not implementation and not hypothesis:
+        # Remove any metadata lines we found
+        impl_text = rest_content
+        impl_text = re.sub(r'[Ss]ource:.*\n?', '', impl_text)
+        impl_text = re.sub(r'[Rr]isk:.*\n?', '', impl_text)
+        impl_text = re.sub(r'[Ee]stimated [Gg]ain:.*\n?', '', impl_text)
+        impl_text = re.sub(r'[Ss]tatus:.*\n?', '', impl_text)
+        impl_text = re.sub(r'---+', '', impl_text)
+        impl_text = re.sub(r'===+', '', impl_text)
+        implementation = impl_text.strip()
+        hypothesis = "May improve model performance based on re-research findings."
+        validation = "Compare CV score before and after."
+
+    # Build properly formatted block
+    formatted = f"""## IDEA: {title}
+Source: {source}
+Risk: {risk}
+Estimated gain: {gain}
+Status: pending
+---
+Hypothesis: {hypothesis}
+Implementation: {implementation}
+Validation: {validation}
+==="""
+
+    return formatted
+
+
+def append_ideas_to_file(path: Path, new_ideas_md: str) -> int:
+    """
+    Append new ideas to existing IDEAS.md file with validation.
 
     Args:
         path: Path to IDEAS.md
         new_ideas_md: New ideas content to append
+
+    Returns:
+        Number of valid ideas appended
     """
     path = Path(path)
 
     with open(path, 'r') as f:
         existing = f.read()
 
-    # Add separator
-    combined = existing.rstrip() + "\n\n---\n\n# Re-research Ideas\n\n" + new_ideas_md
+    # Split input by potential idea boundaries
+    # Look for ## IDEA:, **IDEA:, numbered items, or double newlines
+    raw_blocks = re.split(r'(?=## IDEA:|(?=\*\*[Ii]dea:)|(?=\d+\.\s+\*\*)|(?:\n\n(?=[A-Z])))', new_ideas_md)
+
+    valid_ideas = []
+    for block in raw_blocks:
+        sanitized = sanitize_idea_block(block)
+        if sanitized:
+            valid_ideas.append(sanitized)
+
+    if not valid_ideas:
+        print("  Warning: No valid ideas found in re-research output")
+        return 0
+
+    # Add separator and append valid ideas
+    ideas_text = "\n\n".join(valid_ideas)
+    combined = existing.rstrip() + "\n\n---\n\n# Re-research Ideas\n\n" + ideas_text
 
     with open(path, 'w') as f:
         f.write(combined)
+
+    print(f"  Appended {len(valid_ideas)} sanitized ideas to IDEAS.md")
+    return len(valid_ideas)
 
 
 def archive_strategy(strategy_path: Path, archive_path: Path) -> None:
