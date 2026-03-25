@@ -40,11 +40,34 @@ Determine the best path forward from these options:
 {
   "decision": "NEW_IDEAS | PIVOT | NO_NEW_IDEAS",
   "reasoning": "[2-3 sentences explaining the decision]",
-  "new_ideas_md": "[If NEW_IDEAS: Full IDEAS.md entries to append]",
+  "new_ideas_md": "[If NEW_IDEAS: Full IDEAS.md entries - see EXACT format below]",
   "pivot_strategy_md": "[If PIVOT: Complete new STRATEGY.md content]",
   "pivot_strategy_name": "[If PIVOT: Short name for the new strategy]"
 }
 ```
+
+### CRITICAL: new_ideas_md Format
+
+When decision is NEW_IDEAS, the `new_ideas_md` field MUST use this EXACT format for EACH idea:
+
+```
+## IDEA: [Short descriptive title]
+Source: [Paper title or "re-research"]
+Risk: low | medium | high
+Estimated gain: small | medium | large
+Status: pending
+---
+Hypothesis: [One sentence on why this should help]
+Implementation: [Precise description of what to change in train.py]
+Validation: [How to know it worked]
+===
+```
+
+IMPORTANT:
+- Each idea MUST start with exactly `## IDEA:` (not `## Idea A:` or `## 1.` or any other format)
+- Include the `---` separator before Hypothesis
+- Include the `===` separator after Validation
+- Include 3-5 ideas, each in the exact format above
 
 ## Guidelines
 
