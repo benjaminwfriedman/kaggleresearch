@@ -12,6 +12,7 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime
 import urllib.parse
 import urllib.request
+import urllib.error
 
 
 @dataclass
@@ -111,7 +112,8 @@ def search_semantic_scholar(
     query: str,
     n: int = 10,
     exclude_queries: Optional[Set[str]] = None,
-    fields: Optional[List[str]] = None
+    fields: Optional[List[str]] = None,
+    max_retries: int = 3
 ) -> List[Paper]:
     """
     Search Semantic Scholar for papers matching the query.
@@ -121,6 +123,7 @@ def search_semantic_scholar(
         n: Maximum number of papers to return
         exclude_queries: Set of queries already searched
         fields: List of fields to retrieve
+        max_retries: Maximum number of retries on rate limit
 
     Returns:
         List of Paper objects
@@ -139,39 +142,51 @@ def search_semantic_scholar(
 
     url = f"{base_url}?{urllib.parse.urlencode(params)}"
 
-    try:
-        req = urllib.request.Request(url)
-        req.add_header('User-Agent', 'KaggleResearch/1.0')
+    for attempt in range(max_retries):
+        try:
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'KaggleResearch/1.0')
 
-        with urllib.request.urlopen(req, timeout=30) as response:
-            data = json.loads(response.read().decode())
+            with urllib.request.urlopen(req, timeout=30) as response:
+                data = json.loads(response.read().decode())
 
-        for item in data.get('data', []):
-            arxiv_id = None
-            if 'externalIds' in item and item['externalIds']:
-                arxiv_id = item['externalIds'].get('ArXiv')
+            for item in data.get('data', []):
+                arxiv_id = None
+                if 'externalIds' in item and item['externalIds']:
+                    arxiv_id = item['externalIds'].get('ArXiv')
 
-            authors = []
-            if 'authors' in item and item['authors']:
-                authors = [a.get('name', '') for a in item['authors'] if a.get('name')]
+                authors = []
+                if 'authors' in item and item['authors']:
+                    authors = [a.get('name', '') for a in item['authors'] if a.get('name')]
 
-            paper = Paper(
-                title=item.get('title', ''),
-                authors=authors,
-                abstract=item.get('abstract', '') or '',
-                arxiv_id=arxiv_id,
-                url=item.get('url', ''),
-                year=item.get('year', 0) or 0,
-                citation_count=item.get('citationCount', 0) or 0,
-                source="semantic_scholar",
-            )
-            papers.append(paper)
+                paper = Paper(
+                    title=item.get('title', ''),
+                    authors=authors,
+                    abstract=item.get('abstract', '') or '',
+                    arxiv_id=arxiv_id,
+                    url=item.get('url', ''),
+                    year=item.get('year', 0) or 0,
+                    citation_count=item.get('citationCount', 0) or 0,
+                    source="semantic_scholar",
+                )
+                papers.append(paper)
 
-        # Rate limiting
-        time.sleep(0.5)
+            # Success - rate limit delay before returning
+            time.sleep(1.0)
+            return papers
 
-    except Exception as e:
-        print(f"Semantic Scholar search error: {e}")
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                # Rate limited - exponential backoff
+                wait_time = (2 ** attempt) * 5  # 5s, 10s, 20s
+                print(f"  Semantic Scholar rate limited. Waiting {wait_time}s (attempt {attempt + 1}/{max_retries})...")
+                time.sleep(wait_time)
+            else:
+                print(f"Semantic Scholar HTTP error: {e}")
+                break
+        except Exception as e:
+            print(f"Semantic Scholar search error: {e}")
+            break
 
     return papers
 
