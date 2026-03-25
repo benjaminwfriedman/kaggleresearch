@@ -92,18 +92,25 @@ Option 2 (Environment variables):
 
 def _setup_kaggle_credentials():
     """Ensure Kaggle credentials are set up before API calls."""
-    kaggle_dir = Path.home() / '.kaggle'
-    kaggle_json = kaggle_dir / 'kaggle.json'
+    # Try both home dir and /root (for Colab)
+    possible_dirs = [Path.home() / '.kaggle', Path('/root/.kaggle')]
 
-    # If credentials file doesn't exist but env vars are set, create it
     username = os.environ.get('KAGGLE_USERNAME')
     key = os.environ.get('KAGGLE_KEY')
 
-    if username and key and not kaggle_json.exists():
-        kaggle_dir.mkdir(parents=True, exist_ok=True)
-        with open(kaggle_json, 'w') as f:
-            json.dump({'username': username, 'key': key}, f)
-        kaggle_json.chmod(0o600)
+    if not username or not key:
+        return
+
+    for kaggle_dir in possible_dirs:
+        kaggle_json = kaggle_dir / 'kaggle.json'
+        try:
+            kaggle_dir.mkdir(parents=True, exist_ok=True)
+            # Always overwrite to ensure current credentials are used
+            with open(kaggle_json, 'w') as f:
+                json.dump({'username': username, 'key': key}, f)
+            kaggle_json.chmod(0o600)
+        except PermissionError:
+            continue
 
 
 def parse_competition(url: str) -> CompetitionMeta:
