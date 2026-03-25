@@ -56,19 +56,54 @@ def load_data():
 def get_target_and_features(train_df, test_df):
     """
     Extract target column and feature columns.
+    Auto-detects target and ID columns based on common naming patterns.
     Returns: X_train, y_train, X_test, feature_names, id_column_values
     """
-    # EDITABLE: Modify these based on competition data
-    target_col = "target"
-    id_col = "id"
+    # Auto-detect target column (column in train but not in test)
+    train_only_cols = set(train_df.columns) - set(test_df.columns)
+
+    # Common target column names
+    target_candidates = ['target', 'Target', 'label', 'Label', 'y', 'Y',
+                         'Survived', 'survived', 'class', 'Class']
+
+    target_col = None
+    for candidate in target_candidates:
+        if candidate in train_only_cols:
+            target_col = candidate
+            break
+
+    # If no common name found, use the first train-only column
+    if target_col is None and train_only_cols:
+        target_col = list(train_only_cols)[0]
+
+    if target_col is None:
+        raise ValueError("Could not auto-detect target column")
+
+    # Auto-detect ID column
+    id_candidates = ['id', 'Id', 'ID', 'PassengerId', 'index', 'Index',
+                     'row_id', 'RowId', 'sample_id', 'SampleId']
+
+    id_col = None
+    for candidate in id_candidates:
+        if candidate in test_df.columns:
+            id_col = candidate
+            break
 
     # Identify feature columns (exclude target and id)
-    feature_cols = [c for c in train_df.columns if c not in [target_col, id_col]]
+    exclude_cols = [target_col]
+    if id_col:
+        exclude_cols.append(id_col)
+
+    feature_cols = [c for c in train_df.columns if c not in exclude_cols]
 
     X_train = train_df[feature_cols].copy()
     y_train = train_df[target_col].values
     X_test = test_df[feature_cols].copy()
-    test_ids = test_df[id_col].values if id_col in test_df.columns else np.arange(len(test_df))
+    test_ids = test_df[id_col].values if id_col and id_col in test_df.columns else np.arange(len(test_df))
+
+    print(f"  Target column: {target_col}")
+    print(f"  ID column: {id_col}")
+    print(f"  Features: {len(feature_cols)} columns")
 
     return X_train, y_train, X_test, feature_cols, test_ids
 
