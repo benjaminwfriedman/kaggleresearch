@@ -15,12 +15,22 @@ from typing import Dict, List, Optional, Any
 
 @dataclass
 class IdeaNode:
-    """A node in the idea exploration tree."""
+    """
+    A node in the idea exploration tree.
+
+    Tree Structure:
+    - Child: A new experiment that fills in an open dimension left by parent
+    - Sibling: An alternative answer to the same question (differs on one dimension)
+
+    The tree uses UCB1 for node selection and tracks dimensions to enable
+    intelligent backtracking and exploration.
+    """
     id: str
     idea_title: str
     parent_commit: str  # Git commit SHA to restore on backtrack
     parent_node_id: Optional[str]  # ID of parent node (None for root)
     children: List[str] = field(default_factory=list)  # IDs of child nodes
+    siblings: List[str] = field(default_factory=list)  # IDs of sibling nodes (same parent)
     status: str = "pending"  # pending, running, improved, no_improvement, crashed, plateau
     score: Optional[float] = None
     depth: int = 0
@@ -28,11 +38,40 @@ class IdeaNode:
     timestamp: str = ""
     error_message: Optional[str] = None
 
+    # New fields for tree-based exploration (F1 from spec)
+    hypothesis: str = ""  # One-sentence hypothesis for this experiment
+    dimension_answered: str = ""  # Which dimension this node answers (e.g., "feature_engineering")
+    value_chosen: str = ""  # The specific value chosen for that dimension
+    fixed_context: Dict[str, str] = field(default_factory=dict)  # Inherited from ancestors {dim: value}
+    open_dimensions: List[str] = field(default_factory=list)  # Dimensions still to explore
+
+    # UCB1 tracking
+    visits: int = 0  # Number of times this node was selected/expanded
+    total_reward: float = 0.0  # Sum of rewards from this subtree
+
+    # Relationship type
+    relationship: str = "child"  # "child" or "sibling" - how this relates to parent
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'IdeaNode':
+        # Handle missing fields for backward compatibility
+        defaults = {
+            'siblings': [],
+            'hypothesis': '',
+            'dimension_answered': '',
+            'value_chosen': '',
+            'fixed_context': {},
+            'open_dimensions': [],
+            'visits': 0,
+            'total_reward': 0.0,
+            'relationship': 'child',
+        }
+        for key, default_val in defaults.items():
+            if key not in data:
+                data[key] = default_val
         return cls(**data)
 
 
@@ -230,6 +269,318 @@ class IdeaTree:
                 break
 
         return None  # Tree exhausted
+
+    # ─── UCB1 Selection (F4 from spec) ────────────────────────────────────────
+
+    def ucb1_score(
+        self,
+        node_id: str,
+        exploration_constant: float = 1.414,
+        metric_direction: str = 'higher_better'
+    ) -> float:
+        """
+        Calculate UCB1 score for a node.
+
+        UCB1 = exploitation + C * sqrt(log(total_runs) / node_visits)
+
+        Args:
+            node_id: The node to score
+            exploration_constant: C parameter (default sqrt(2))
+            metric_direction: 'higher_better' or 'lower_better'
+
+        Returns:
+            UCB1 score (higher = should explore more)
+        """
+        import math
+
+        node = self.nodes.get(node_id)
+        if not node:
+            return float('-inf')
+
+        total_runs = sum(n.visits for n in self.nodes.values())
+        if total_runs == 0:
+            return float('inf')  # Prioritize unvisited nodes
+
+        if node.visits == 0:
+            return float('inf')  # Unvisited node gets priority
+
+        # Exploitation: average reward (normalized score)
+        avg_reward = node.total_reward / node.visits
+
+        # For lower_better metrics, we negate so UCB1 still works
+        if metric_direction == 'lower_better':
+            avg_reward = -avg_reward
+
+        # Exploration bonus
+        exploration = exploration_constant * math.sqrt(math.log(total_runs) / node.visits)
+
+        return avg_reward + exploration
+
+    def select_node_ucb1(
+        self,
+        exploration_constant: float = 1.414,
+        metric_direction: str = 'higher_better',
+        min_score_threshold: Optional[float] = None
+    ) -> Optional[IdeaNode]:
+        """
+        Select the next node to expand using UCB1.
+
+        Excludes:
+        - Nodes with status 'plateau' or 'crashed'
+        - Nodes below min_score_threshold (if provided)
+
+        Args:
+            exploration_constant: C parameter for UCB1
+            metric_direction: 'higher_better' or 'lower_better'
+            min_score_threshold: Optional minimum score to consider
+
+        Returns:
+            The node with highest UCB1 score, or None if tree exhausted
+        """
+        candidates = []
+
+        for node in self.nodes.values():
+            # Skip pruned nodes
+            if node.status in ('plateau', 'crashed'):
+                continue
+
+            # Skip nodes below threshold (F8 pruning)
+            if min_score_threshold is not None and node.score is not None:
+                if metric_direction == 'higher_better' and node.score < min_score_threshold:
+                    continue
+                if metric_direction == 'lower_better' and node.score > min_score_threshold:
+                    continue
+
+            # Only select nodes that have been evaluated (or root)
+            if node.status in ('improved', 'no_improvement') or node.id == self.root_id:
+                candidates.append(node)
+
+        if not candidates:
+            return None
+
+        # Calculate UCB1 for each candidate
+        scored = [
+            (node, self.ucb1_score(node.id, exploration_constant, metric_direction))
+            for node in candidates
+        ]
+
+        # Sort by UCB1 score descending
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        return scored[0][0] if scored else None
+
+    def update_node_reward(
+        self,
+        node_id: str,
+        score: float,
+        baseline_score: float,
+        metric_direction: str = 'higher_better'
+    ):
+        """
+        Update a node's reward after an experiment.
+
+        Propagates the reward up to ancestors (MCTS-style backpropagation).
+
+        Args:
+            node_id: The node that was just evaluated
+            score: The experiment score
+            baseline_score: The baseline score for normalization
+            metric_direction: 'higher_better' or 'lower_better'
+        """
+        # Normalize reward to [0, 1] range approximately
+        if metric_direction == 'higher_better':
+            # Reward = improvement over baseline (can be negative)
+            reward = (score - baseline_score) / max(abs(baseline_score), 0.001)
+        else:
+            # For lower_better, improvement means lower score
+            reward = (baseline_score - score) / max(abs(baseline_score), 0.001)
+
+        # Clamp to reasonable range
+        reward = max(-1.0, min(1.0, reward))
+
+        # Propagate up the tree
+        current = self.nodes.get(node_id)
+        while current:
+            current.visits += 1
+            current.total_reward += reward
+
+            if current.parent_node_id:
+                current = self.nodes.get(current.parent_node_id)
+            else:
+                break
+
+    def get_expansion_context(self, node_id: str) -> Dict[str, Any]:
+        """
+        Get context for I-MCTS expansion (F3 from spec).
+
+        Returns the selected node, its siblings with results, and its parent.
+        This context is passed to the LLM when generating new experiments.
+
+        Args:
+            node_id: The node to expand from
+
+        Returns:
+            Dict with 'node', 'siblings', 'parent' keys
+        """
+        node = self.nodes.get(node_id)
+        if not node:
+            return {'node': None, 'siblings': [], 'parent': None}
+
+        siblings = self.get_siblings(node_id)
+        parent = self.get_parent(node_id)
+
+        # Format siblings with their results
+        sibling_info = []
+        for sib in siblings:
+            sibling_info.append({
+                'title': sib.idea_title,
+                'hypothesis': sib.hypothesis,
+                'dimension': sib.dimension_answered,
+                'value': sib.value_chosen,
+                'status': sib.status,
+                'score': sib.score,
+            })
+
+        return {
+            'node': {
+                'title': node.idea_title,
+                'hypothesis': node.hypothesis,
+                'fixed_context': node.fixed_context,
+                'open_dimensions': node.open_dimensions,
+                'score': node.score,
+            },
+            'siblings': sibling_info,
+            'parent': {
+                'title': parent.idea_title if parent else None,
+                'hypothesis': parent.hypothesis if parent else None,
+                'open_dimensions': parent.open_dimensions if parent else [],
+            } if parent else None,
+        }
+
+    def add_child_node(
+        self,
+        parent_node_id: str,
+        idea_title: str,
+        parent_commit: str,
+        hypothesis: str = "",
+        dimension_answered: str = "",
+        value_chosen: str = "",
+        branch_name: str = ""
+    ) -> IdeaNode:
+        """
+        Add a child node (answers an open dimension from parent).
+
+        Args:
+            parent_node_id: ID of the parent node
+            idea_title: Title of the new idea
+            parent_commit: Git commit SHA
+            hypothesis: One-sentence hypothesis
+            dimension_answered: Which dimension this answers
+            value_chosen: The value chosen for that dimension
+            branch_name: Git branch name
+
+        Returns:
+            The new child node
+        """
+        parent = self.nodes.get(parent_node_id)
+        if not parent:
+            raise ValueError(f"Parent node {parent_node_id} not found")
+
+        # Inherit fixed context from parent and add this dimension
+        fixed_context = dict(parent.fixed_context)
+        if dimension_answered:
+            fixed_context[dimension_answered] = value_chosen
+
+        # Open dimensions are inherited minus the one we just answered
+        open_dims = [d for d in parent.open_dimensions if d != dimension_answered]
+
+        node = self.add_node(idea_title, parent_commit, parent_node_id, branch_name)
+        node.hypothesis = hypothesis
+        node.dimension_answered = dimension_answered
+        node.value_chosen = value_chosen
+        node.fixed_context = fixed_context
+        node.open_dimensions = open_dims
+        node.relationship = "child"
+
+        return node
+
+    def add_sibling_node(
+        self,
+        sibling_node_id: str,
+        idea_title: str,
+        parent_commit: str,
+        hypothesis: str = "",
+        value_chosen: str = "",
+        branch_name: str = ""
+    ) -> IdeaNode:
+        """
+        Add a sibling node (alternative answer to same dimension).
+
+        Args:
+            sibling_node_id: ID of an existing sibling
+            idea_title: Title of the new idea
+            parent_commit: Git commit SHA (should be parent's commit)
+            hypothesis: One-sentence hypothesis
+            value_chosen: The alternative value for the same dimension
+            branch_name: Git branch name
+
+        Returns:
+            The new sibling node
+        """
+        sibling = self.nodes.get(sibling_node_id)
+        if not sibling:
+            raise ValueError(f"Sibling node {sibling_node_id} not found")
+
+        parent_node_id = sibling.parent_node_id
+        if not parent_node_id:
+            raise ValueError("Cannot add sibling to root node")
+
+        parent = self.nodes.get(parent_node_id)
+
+        # Inherit same fixed context as sibling (same parent context)
+        # but with different value for the same dimension
+        fixed_context = dict(parent.fixed_context) if parent else {}
+        dimension = sibling.dimension_answered
+        if dimension:
+            fixed_context[dimension] = value_chosen
+
+        node = self.add_node(idea_title, parent_commit, parent_node_id, branch_name)
+        node.hypothesis = hypothesis
+        node.dimension_answered = dimension
+        node.value_chosen = value_chosen
+        node.fixed_context = fixed_context
+        node.open_dimensions = list(sibling.open_dimensions)  # Same open dims as sibling
+        node.relationship = "sibling"
+
+        # Track sibling relationship
+        sibling.siblings.append(node.id)
+        node.siblings.append(sibling_node_id)
+        # Also track other existing siblings
+        for other_sib_id in sibling.siblings:
+            if other_sib_id != node.id:
+                node.siblings.append(other_sib_id)
+                other_sib = self.nodes.get(other_sib_id)
+                if other_sib:
+                    other_sib.siblings.append(node.id)
+
+        return node
+
+    def update_open_dimensions(self, node_id: str, new_dimensions: List[str]):
+        """
+        Update open dimensions for a node after reflection (F6 from spec).
+
+        Called after an experiment to discover new exploration dimensions.
+
+        Args:
+            node_id: The node to update
+            new_dimensions: Newly discovered dimensions to add
+        """
+        node = self.nodes.get(node_id)
+        if node:
+            # Add new dimensions, avoiding duplicates
+            for dim in new_dimensions:
+                if dim not in node.open_dimensions:
+                    node.open_dimensions.append(dim)
 
     def get_next_pending_at_level(self, parent_node_id: Optional[str]) -> Optional[IdeaNode]:
         """Get next pending node at a specific level (children of parent)."""
