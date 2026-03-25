@@ -4,7 +4,7 @@
 
 KaggleResearch is a Colab notebook that automatically improves your Kaggle competition score by:
 
-1. Searching academic literature (arXiv, Semantic Scholar) for SOTA approaches
+1. Searching academic literature (arXiv, Semantic Scholar) and web content (Tavily) for SOTA approaches
 2. Selecting a strategy and generating experiment ideas
 3. Running an exploit loop that keeps winning changes
 4. Re-researching when progress plateaus
@@ -22,6 +22,7 @@ KaggleResearch is a Colab notebook that automatically improves your Kaggle compe
 3. **Set up credentials**:
    - Upload your `kaggle.json` to Colab
    - Add `ANTHROPIC_API_KEY` to Colab secrets (Runtime → Manage secrets)
+   - (Optional) Add `TAVILY_API_KEY` for enhanced web search (get one at https://tavily.com)
 
 4. **Run**: Execute cells in order. Approve the strategy, then let it run!
 
@@ -99,6 +100,7 @@ LITERATURE_DEPTH     = 10      # Papers to retrieve per search
 - Google Colab (free tier works, A100 recommended)
 - Kaggle API credentials
 - Anthropic API key
+- (Optional) Tavily API key for enhanced web search (`TAVILY_API_KEY`)
 
 ## License
 

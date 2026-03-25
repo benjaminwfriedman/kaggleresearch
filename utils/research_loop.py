@@ -174,7 +174,8 @@ def run_reresearch(
         problem_type=checkpoint.problem_type,
         metric=comp_meta.get('metric', 'accuracy'),
         literature_depth=config.literature_depth,
-        client=client
+        client=client,
+        log_dir=config.literature_dir
     )
 
     print(f"  Result: {result.outcome}")
@@ -186,17 +187,27 @@ def run_reresearch(
         )
         print(f"  {action['message']}")
 
-        # Attach new ideas to best node in tree
-        best_node = tree.get_best_node(config.metric_direction)
-        if best_node:
-            print(f"  Attaching new ideas to best node: {best_node.idea_title}")
-            git_checkout(config.repo_dir, best_node.parent_commit)
-            tree.set_current_node(best_node.id)
+        # Check if ideas were actually added (sanitization may have failed)
+        if action['action'] == 'halt':
+            # Ideas couldn't be parsed - increment attempt counter and try again or halt
+            checkpoint.reresearch_attempts += 1
+            if checkpoint.reresearch_attempts >= 3:
+                print("  Max re-research attempts (3) reached with unparseable ideas. Halting.")
+                checkpoint.phase = 'halted'
+                return ("halt", checkpoint)
+            # Let it fall through to attempt 2 (re-read)
+        else:
+            # Ideas were successfully added
+            best_node = tree.get_best_node(config.metric_direction)
+            if best_node:
+                print(f"  Attaching new ideas to best node: {best_node.idea_title}")
+                git_checkout(config.repo_dir, best_node.parent_commit)
+                tree.set_current_node(best_node.id)
 
-        checkpoint.phase = 'research'
-        checkpoint.reresearch_attempts = 0
-        checkpoint.plateau_window_scores = []
-        return ("continue", checkpoint)
+            checkpoint.phase = 'research'
+            checkpoint.reresearch_attempts = 0
+            checkpoint.plateau_window_scores = []
+            return ("continue", checkpoint)
 
     elif result.outcome == 'pivot':
         print("\n  === Pivot: Creating new strategy branch ===")
@@ -271,7 +282,8 @@ def run_reresearch(
             config.literature_dir / 'papers.json',
             strategy_md,
             failure_summary,
-            client
+            client,
+            log_dir=config.literature_dir
         )
 
         if result2.outcome == 'new_ideas':
@@ -281,14 +293,17 @@ def run_reresearch(
             )
             print(f"  {action['message']}")
 
-            best_node = tree.get_best_node(config.metric_direction)
-            if best_node:
-                git_checkout(config.repo_dir, best_node.parent_commit)
-                tree.set_current_node(best_node.id)
+            # Check if ideas were actually added
+            if action['action'] != 'halt':
+                best_node = tree.get_best_node(config.metric_direction)
+                if best_node:
+                    git_checkout(config.repo_dir, best_node.parent_commit)
+                    tree.set_current_node(best_node.id)
 
-            checkpoint.phase = 'research'
-            checkpoint.plateau_window_scores = []
-            return ("continue", checkpoint)
+                checkpoint.phase = 'research'
+                checkpoint.plateau_window_scores = []
+                return ("continue", checkpoint)
+            # If action was halt, fall through to exhausted message
 
     print("\n  Re-research exhausted. No new ideas found.")
     checkpoint.phase = 'halted'

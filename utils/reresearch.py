@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
+from datetime import datetime
 
 from .literature import (
     search_papers,
@@ -28,6 +29,49 @@ class ReresearchResult:
     reasoning: str = ""
 
 
+def log_reresearch_response(
+    log_dir: Path,
+    attempt_type: str,
+    response_text: str,
+    parsed_result: "ReresearchResult"
+) -> None:
+    """
+    Log re-research LLM response for debugging.
+
+    Args:
+        log_dir: Directory to save logs (typically literature_dir)
+        attempt_type: "new_angle" or "reread"
+        response_text: Raw LLM response
+        parsed_result: Parsed result object
+    """
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = log_dir / f"reresearch_{attempt_type}_{timestamp}.log"
+
+    log_content = f"""=== Re-research Log ===
+Timestamp: {datetime.now().isoformat()}
+Attempt Type: {attempt_type}
+Parsed Outcome: {parsed_result.outcome}
+Parsed Reasoning: {parsed_result.reasoning}
+
+=== Raw LLM Response ===
+{response_text}
+
+=== Parsed new_ideas_md ===
+{parsed_result.new_ideas_md or "(none)"}
+
+=== Parsed pivot_strategy_md ===
+{parsed_result.pivot_strategy_md or "(none)"}
+"""
+
+    with open(log_path, 'w') as f:
+        f.write(log_content)
+
+    print(f"  Re-research response logged to: {log_path.name}")
+
+
 def reresearch_new_angle(
     strategy_md: str,
     failure_summary: str,
@@ -36,7 +80,8 @@ def reresearch_new_angle(
     problem_type: str,
     metric: str,
     literature_depth: int,
-    client: Any  # Anthropic client
+    client: Any,  # Anthropic client
+    log_dir: Optional[Path] = None
 ) -> ReresearchResult:
     """
     Attempt 1 of re-research: Search for new papers with failure context.
@@ -50,6 +95,7 @@ def reresearch_new_angle(
         metric: Evaluation metric
         literature_depth: Number of papers to retrieve
         client: Anthropic API client
+        log_dir: Directory to save debug logs (optional)
 
     Returns:
         ReresearchResult with outcome and optional new content
@@ -103,14 +149,21 @@ def reresearch_new_angle(
     response_text = message.content[0].text
 
     # Parse response
-    return parse_reresearch_response(response_text)
+    result = parse_reresearch_response(response_text)
+
+    # Log for debugging
+    if log_dir:
+        log_reresearch_response(log_dir, "new_angle", response_text, result)
+
+    return result
 
 
 def reresearch_reread(
     cached_papers_path: Path,
     strategy_md: str,
     failure_summary: str,
-    client: Any
+    client: Any,
+    log_dir: Optional[Path] = None
 ) -> ReresearchResult:
     """
     Attempt 2 of re-research: Re-read existing papers with failure context.
@@ -120,6 +173,7 @@ def reresearch_reread(
         strategy_md: Current STRATEGY.md content
         failure_summary: Summary of failed experiments
         client: Anthropic API client
+        log_dir: Directory to save debug logs (optional)
 
     Returns:
         ReresearchResult with outcome and optional new content
@@ -173,23 +227,27 @@ Your response (either new IDEAS.md entries or NO_NEW_IDEAS):"""
     response_text = message.content[0].text.strip()
 
     if "NO_NEW_IDEAS" in response_text.upper():
-        return ReresearchResult(
+        result = ReresearchResult(
             outcome="no_new_ideas",
             reasoning="Re-reading papers did not yield new applicable ideas.",
         )
-
-    # Extract ideas from response
-    if "## IDEA:" in response_text:
-        return ReresearchResult(
+    elif "## IDEA:" in response_text:
+        result = ReresearchResult(
             outcome="new_ideas",
             new_ideas_md=response_text,
             reasoning="Found new ideas by re-reading papers with failure context.",
         )
+    else:
+        result = ReresearchResult(
+            outcome="no_new_ideas",
+            reasoning="Response did not contain valid IDEAS.md entries.",
+        )
 
-    return ReresearchResult(
-        outcome="no_new_ideas",
-        reasoning="Response did not contain valid IDEAS.md entries.",
-    )
+    # Log for debugging
+    if log_dir:
+        log_reresearch_response(log_dir, "reread", response_text, result)
+
+    return result
 
 
 def parse_reresearch_response(response_text: str) -> ReresearchResult:
@@ -202,23 +260,53 @@ def parse_reresearch_response(response_text: str) -> ReresearchResult:
     Returns:
         Parsed ReresearchResult
     """
+    import re
+
     # Try to parse as JSON first
     try:
-        # Find JSON block in response
-        import re
-        json_match = re.search(r'\{[^{}]*"decision"[^{}]*\}', response_text, re.DOTALL)
+        # Find JSON block - look for ```json code blocks first
+        json_block_match = re.search(r'```json\s*([\s\S]*?)\s*```', response_text)
+        if json_block_match:
+            json_str = json_block_match.group(1)
+        else:
+            # Try to find raw JSON object with balanced braces
+            # Find the first { and match to its closing }
+            start_idx = response_text.find('{')
+            if start_idx != -1:
+                depth = 0
+                end_idx = start_idx
+                for i, char in enumerate(response_text[start_idx:], start_idx):
+                    if char == '{':
+                        depth += 1
+                    elif char == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end_idx = i + 1
+                            break
+                json_str = response_text[start_idx:end_idx]
+            else:
+                json_str = None
 
-        if json_match:
-            data = json.loads(json_match.group())
+        if json_str:
+            data = json.loads(json_str)
 
             decision = data.get('decision', '').upper()
 
             if 'NEW_IDEAS' in decision:
-                return ReresearchResult(
-                    outcome="new_ideas",
-                    new_ideas_md=data.get('new_ideas_md', ''),
-                    reasoning=data.get('reasoning', ''),
-                )
+                new_ideas_md = data.get('new_ideas_md', '')
+                # Validate that new_ideas_md actually contains parseable ideas
+                if new_ideas_md and '## IDEA:' in new_ideas_md:
+                    return ReresearchResult(
+                        outcome="new_ideas",
+                        new_ideas_md=new_ideas_md,
+                        reasoning=data.get('reasoning', ''),
+                    )
+                else:
+                    # LLM said NEW_IDEAS but didn't provide valid format
+                    return ReresearchResult(
+                        outcome="no_new_ideas",
+                        reasoning=f"LLM returned NEW_IDEAS but content was not in valid format. Reasoning: {data.get('reasoning', '')}",
+                    )
             elif 'PIVOT' in decision:
                 return ReresearchResult(
                     outcome="pivot",

@@ -1,9 +1,10 @@
 """
 Literature search and caching utilities.
-Searches arXiv and Semantic Scholar for relevant papers.
+Searches arXiv, Semantic Scholar, and Tavily for relevant papers and web content.
 """
 
 import json
+import os
 import time
 import hashlib
 from pathlib import Path
@@ -191,20 +192,98 @@ def search_semantic_scholar(
     return papers
 
 
+def search_tavily(
+    query: str,
+    n: int = 10,
+    include_domains: Optional[List[str]] = None,
+    exclude_domains: Optional[List[str]] = None,
+) -> List[Paper]:
+    """
+    Search Tavily for web content related to the query.
+
+    Tavily is useful for finding recent blog posts, tutorials, discussions,
+    and other web content that may not be indexed in academic databases.
+
+    Args:
+        query: Search query string
+        n: Maximum number of results to return
+        include_domains: List of domains to include (e.g., ['arxiv.org', 'github.com'])
+        exclude_domains: List of domains to exclude
+
+    Returns:
+        List of Paper objects (using Paper as a generic content container)
+    """
+    api_key = os.environ.get('TAVILY_API_KEY')
+    if not api_key:
+        print("  TAVILY_API_KEY not set. Skipping Tavily search.")
+        return []
+
+    try:
+        from tavily import TavilyClient
+    except ImportError:
+        print("  tavily-python package not installed. Run: pip install tavily-python")
+        return []
+
+    papers = []
+
+    try:
+        client = TavilyClient(api_key=api_key)
+
+        search_kwargs = {
+            'query': query,
+            'max_results': min(n, 20),  # Tavily limit
+            'search_depth': 'basic',  # Use basic to save API credits
+            'include_answer': False,
+        }
+
+        if include_domains:
+            search_kwargs['include_domains'] = include_domains
+        if exclude_domains:
+            search_kwargs['exclude_domains'] = exclude_domains
+
+        response = client.search(**search_kwargs)
+
+        for result in response.get('results', []):
+            # Extract year from URL or content if possible
+            year = datetime.now().year  # Default to current year
+
+            # Create Paper object from Tavily result
+            paper = Paper(
+                title=result.get('title', ''),
+                authors=[],  # Tavily doesn't provide authors
+                abstract=result.get('content', ''),
+                url=result.get('url', ''),
+                year=year,
+                citation_count=0,  # Not available from Tavily
+                source="tavily",
+            )
+            papers.append(paper)
+
+        # Small delay to be respectful of API
+        time.sleep(0.5)
+
+    except Exception as e:
+        print(f"  Tavily search error: {e}")
+
+    return papers
+
+
 def search_papers(
     query: str,
     n: int = 10,
     exclude_queries: Optional[Set[str]] = None,
-    problem_type: Optional[str] = None
+    problem_type: Optional[str] = None,
+    include_tavily: bool = True
 ) -> List[Paper]:
     """
-    Search both arXiv and Semantic Scholar, deduplicate and rank results.
+    Search arXiv, Semantic Scholar, and optionally Tavily. Deduplicate and rank results.
 
     Args:
         query: Search query string
         n: Maximum number of papers to return total
         exclude_queries: Set of queries already searched
         problem_type: Problem type for category filtering
+        include_tavily: Whether to include Tavily web search results
 
     Returns:
         List of Paper objects, ranked by relevance and citations
@@ -217,15 +296,29 @@ def search_papers(
         if 'nlp' in problem_type:
             categories.extend(['cs.CL', 'cs.IR'])
 
-    # Search both sources
+    # Search academic sources
     arxiv_papers = search_arxiv(query, n=n, exclude_queries=exclude_queries, categories=categories)
     ss_papers = search_semantic_scholar(query, n=n, exclude_queries=exclude_queries)
+
+    # Search web via Tavily (useful for blogs, tutorials, recent discussions)
+    tavily_papers = []
+    if include_tavily:
+        # Focus on technical domains for ML/AI content
+        tavily_papers = search_tavily(
+            query,
+            n=n,
+            include_domains=[
+                'arxiv.org', 'github.com', 'paperswithcode.com',
+                'kaggle.com', 'huggingface.co', 'medium.com',
+                'towardsdatascience.com', 'machinelearningmastery.com',
+            ],
+        )
 
     # Deduplicate by title similarity
     seen_titles = set()
     all_papers = []
 
-    for paper in arxiv_papers + ss_papers:
+    for paper in arxiv_papers + ss_papers + tavily_papers:
         # Simple normalization for dedup
         normalized = paper.title.lower().strip()
         if normalized not in seen_titles:
