@@ -63,12 +63,16 @@ def check_kaggle_credentials() -> Tuple[bool, str]:
     Returns:
         Tuple of (is_configured, message)
     """
-    kaggle_json = Path.home() / '.kaggle' / 'kaggle.json'
+    # New token-based auth
+    if os.environ.get('KAGGLE_API_TOKEN'):
+        return True, "Kaggle API token found in environment"
 
+    # Legacy: check for kaggle.json file
+    kaggle_json = Path.home() / '.kaggle' / 'kaggle.json'
     if kaggle_json.exists():
         return True, "Kaggle credentials found"
 
-    # Check environment variables
+    # Legacy: check environment variables
     if os.environ.get('KAGGLE_USERNAME') and os.environ.get('KAGGLE_KEY'):
         return True, "Kaggle credentials found in environment"
 
@@ -80,32 +84,36 @@ def check_kaggle_credentials() -> Tuple[bool, str]:
     return False, """
 Kaggle API credentials not found. Please set up authentication:
 
-Option 1 (Recommended for Colab):
-  1. Go to kaggle.com -> Account -> API -> Create New Token
-  2. Upload kaggle.json to Colab
-  3. Run: !mkdir -p ~/.kaggle && mv kaggle.json ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json
-
-Option 2 (Environment variables):
-  Set KAGGLE_USERNAME and KAGGLE_KEY environment variables
+Set KAGGLE_API_TOKEN environment variable with your API token from:
+  kaggle.com -> Settings -> API -> Create New Token
 """
 
 
 def _setup_kaggle_credentials():
     """Ensure Kaggle credentials are set up before API calls."""
-    # Try both home dir and /root (for Colab)
-    possible_dirs = [Path.home() / '.kaggle', Path('/root/.kaggle')]
+    # New Kaggle API uses KAGGLE_API_TOKEN environment variable
+    # The kaggle library reads it directly, no file needed
+    # But we keep this for compatibility with older setups
 
+    token = os.environ.get('KAGGLE_API_TOKEN')
+    if token:
+        # New token-based auth - kaggle library reads env var directly
+        return
+
+    # Legacy: username/key pair
     username = os.environ.get('KAGGLE_USERNAME')
     key = os.environ.get('KAGGLE_KEY')
 
     if not username or not key:
         return
 
+    # Try both home dir and /root (for Colab)
+    possible_dirs = [Path.home() / '.kaggle', Path('/root/.kaggle')]
+
     for kaggle_dir in possible_dirs:
         kaggle_json = kaggle_dir / 'kaggle.json'
         try:
             kaggle_dir.mkdir(parents=True, exist_ok=True)
-            # Always overwrite to ensure current credentials are used
             with open(kaggle_json, 'w') as f:
                 json.dump({'username': username, 'key': key}, f)
             kaggle_json.chmod(0o600)
