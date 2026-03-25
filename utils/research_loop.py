@@ -608,6 +608,23 @@ def run_research(
                 config, checkpoint, tree, current_node, next_idea, client
             )
 
+            # Check for too many consecutive crashes from current node
+            MAX_CONSECUTIVE_CRASHES = 5
+            consecutive_crashes = tree.count_consecutive_crashes(current_node.id)
+            if consecutive_crashes >= MAX_CONSECUTIVE_CRASHES:
+                print(f"\n  Too many consecutive crashes ({consecutive_crashes}) from {current_node.idea_title}")
+                print("  Triggering re-research to find new approaches...")
+                tree.update_status(current_node.id, "plateau", current_node.score)
+
+                action, checkpoint = run_reresearch(config, checkpoint, tree, client)
+                tree.save()
+                save_checkpoint(config.checkpoint_path, checkpoint)
+
+                if action == "halt":
+                    exit_reason = "halted"
+                    break
+                continue
+
             # UI callback
             if display_callback:
                 experiments = load_experiments(config.db_path)

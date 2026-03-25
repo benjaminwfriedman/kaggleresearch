@@ -450,6 +450,15 @@ def append_ideas_to_file(path: Path, new_ideas_md: str) -> int:
     with open(path, 'r') as f:
         existing = f.read()
 
+    # Extract existing idea titles to avoid duplicates
+    existing_titles = set()
+    for match in re.finditer(r'## IDEA:\s*(.+)', existing):
+        title = match.group(1).strip().lower()
+        # Also match partial titles (first 30 chars) to catch truncated duplicates
+        existing_titles.add(title)
+        if len(title) > 30:
+            existing_titles.add(title[:30])
+
     # Split input by potential idea boundaries
     # Look for ## IDEA:, **IDEA:, numbered items, or double newlines
     raw_blocks = re.split(r'(?=## IDEA:|(?=\*\*[Ii]dea:)|(?=\d+\.\s+\*\*)|(?:\n\n(?=[A-Z])))', new_ideas_md)
@@ -458,6 +467,17 @@ def append_ideas_to_file(path: Path, new_ideas_md: str) -> int:
     for block in raw_blocks:
         sanitized = sanitize_idea_block(block)
         if sanitized:
+            # Extract title from sanitized block and check for duplicates
+            title_match = re.search(r'## IDEA:\s*(.+)', sanitized)
+            if title_match:
+                title = title_match.group(1).strip().lower()
+                # Check both full title and prefix
+                if title in existing_titles or (len(title) > 30 and title[:30] in existing_titles):
+                    print(f"  Skipping duplicate idea: {title[:50]}...")
+                    continue
+                existing_titles.add(title)
+                if len(title) > 30:
+                    existing_titles.add(title[:30])
             valid_ideas.append(sanitized)
 
     if not valid_ideas:

@@ -270,6 +270,37 @@ class IdeaTree:
 
         return None  # Tree exhausted
 
+    def count_crashed_children(self, node_id: str) -> int:
+        """Count how many direct children of this node have crashed."""
+        node = self.nodes.get(node_id)
+        if not node:
+            return 0
+
+        crashed = 0
+        for child_id in node.children:
+            child = self.nodes.get(child_id)
+            if child and child.status == 'crashed':
+                crashed += 1
+        return crashed
+
+    def count_consecutive_crashes(self, node_id: str) -> int:
+        """Count consecutive crashed children (most recent first)."""
+        node = self.nodes.get(node_id)
+        if not node:
+            return 0
+
+        # Sort children by timestamp (most recent first)
+        children = [self.nodes.get(cid) for cid in node.children if self.nodes.get(cid)]
+        children.sort(key=lambda c: c.timestamp, reverse=True)
+
+        consecutive = 0
+        for child in children:
+            if child.status == 'crashed':
+                consecutive += 1
+            else:
+                break
+        return consecutive
+
     # ─── UCB1 Selection (F4 from spec) ────────────────────────────────────────
 
     def ucb1_score(
