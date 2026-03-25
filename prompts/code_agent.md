@@ -19,15 +19,39 @@ Return ONLY the modified train.py — complete file, no commentary.
 5. **If the idea conflicts with the strategy**, implement the lowest-risk interpretation
 6. **If the idea is impossible** given the current code, return the file unchanged
 
-## Pre-installed Libraries (No pip install needed)
+## Available Libraries
 
-- torch, torchvision
-- sklearn (scikit-learn)
-- pandas, numpy, scipy
-- lightgbm, xgboost
-- transformers, datasets
-- timm
-- albumentations
+These packages are pre-installed in the Colab environment. You can import and use them freely:
+
+**Core ML/Data:**
+- pandas, numpy, scipy, polars
+- sklearn (scikit-learn) - all submodules
+- statsmodels
+
+**Gradient Boosting:**
+- lightgbm, xgboost, catboost
+
+**Deep Learning:**
+- torch, torchvision, torchaudio
+- transformers, datasets, tokenizers
+- timm, segmentation_models_pytorch
+
+**Hyperparameter Optimization:**
+- optuna
+
+**Computer Vision:**
+- albumentations, cv2 (opencv-python)
+- PIL (Pillow)
+
+**NLP:**
+- nltk, spacy
+- sentence-transformers
+
+**Utilities:**
+- tqdm, joblib
+- matplotlib, seaborn, plotly
+
+**DO NOT** use packages not in this list without marking the idea as `Risk: high`
 
 ## Output Format
 

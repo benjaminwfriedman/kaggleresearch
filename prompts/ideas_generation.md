@@ -37,13 +37,23 @@ Validation: [How to know it worked — metric direction and magnitude]
 1. **Risk ASC** — Low risk experiments first
 2. **Within same risk tier:** Estimated Gain DESC
 3. **At least 3 low-risk entries** at the top
-4. Ideas requiring new `pip install` are automatically `Risk: high`
+4. Ideas requiring packages NOT in the available list are automatically `Risk: high`
+
+## Available Libraries (Pre-installed)
+
+These packages are available in the Colab environment - use them freely:
+- **Core:** pandas, numpy, scipy, polars, sklearn, statsmodels
+- **Gradient Boosting:** lightgbm, xgboost, catboost
+- **Deep Learning:** torch, torchvision, transformers, timm, segmentation_models_pytorch
+- **Hyperparameter Optimization:** optuna
+- **CV/NLP:** albumentations, cv2, PIL, nltk, spacy, sentence-transformers
+- **Utilities:** tqdm, joblib, matplotlib, seaborn
 
 ## Risk Definitions
 
-- **Low:** Single hyperparameter change, simple feature addition, minor architecture tweak
-- **Medium:** New feature engineering approach, different loss function, architectural change
-- **High:** New library required, fundamental algorithm change, complex multi-part modification
+- **Low:** Single hyperparameter change, simple feature addition, minor architecture tweak (using available libraries)
+- **Medium:** New feature engineering approach, different loss function, architectural change (using available libraries)
+- **High:** Requires library NOT in available list, fundamental algorithm change, complex multi-part modification
 
 ## Estimated Gain Definitions
 
