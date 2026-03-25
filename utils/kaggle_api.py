@@ -145,17 +145,24 @@ def parse_competition(url: str) -> CompetitionMeta:
     api.authenticate()
 
     # Get competition details
-    competitions = api.competitions_list(search=slug)
     comp = None
-    for c in competitions:
-        if c.ref == slug:
-            comp = c
-            break
+    try:
+        # Try direct lookup first (new API)
+        comp = api.competition_view(slug)
+    except Exception:
+        pass
 
     if comp is None:
-        # Try direct lookup
+        # Fallback to search
         try:
-            comp = api.competition_view(slug)
+            competitions = api.competitions_list(search=slug)
+            # Handle new API response format
+            if hasattr(competitions, 'competitions'):
+                competitions = competitions.competitions
+            for c in competitions:
+                if getattr(c, 'ref', None) == slug or getattr(c, 'slug', None) == slug:
+                    comp = c
+                    break
         except Exception:
             pass
 
