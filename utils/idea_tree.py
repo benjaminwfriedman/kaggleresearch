@@ -762,6 +762,15 @@ class IdeaTree:
             # Score display
             score_str = f": {node.score:.4f}" if node.score is not None else ""
 
+            # Error message for crashed nodes
+            error_str = ""
+            if node.status == 'crashed' and node.error_message:
+                # Truncate error to first 60 chars
+                error_preview = node.error_message[:60].replace('\n', ' ')
+                if len(node.error_message) > 60:
+                    error_preview += "..."
+                error_str = f" ({error_preview})"
+
             # Best path marker
             best_marker = " ← BEST" if node.id in best_path and node.id == self.get_best_node(metric_direction).id else ""
 
@@ -769,7 +778,7 @@ class IdeaTree:
             current_marker = " *" if node.id == self.current_node_id else ""
 
             connector = "└── " if is_last else "├── "
-            lines.append(f"{prefix}{connector}[{node.idea_title}{score_str}] {symbol}{best_marker}{current_marker}")
+            lines.append(f"{prefix}{connector}[{node.idea_title}{score_str}] {symbol}{error_str}{best_marker}{current_marker}")
 
             # Render children
             child_prefix = prefix + ("    " if is_last else "│   ")
