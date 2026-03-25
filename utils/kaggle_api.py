@@ -91,13 +91,21 @@ Set KAGGLE_API_TOKEN environment variable with your API token from:
 
 def _setup_kaggle_credentials():
     """Ensure Kaggle credentials are set up before API calls."""
-    # New Kaggle API uses KAGGLE_API_TOKEN environment variable
-    # The kaggle library reads it directly, no file needed
-    # But we keep this for compatibility with older setups
+    # Try both home dir and /root (for Colab)
+    possible_dirs = [Path.home() / '.kaggle', Path('/root/.kaggle')]
 
+    # New token-based auth - write to access_token file
     token = os.environ.get('KAGGLE_API_TOKEN')
     if token:
-        # New token-based auth - kaggle library reads env var directly
+        for kaggle_dir in possible_dirs:
+            try:
+                kaggle_dir.mkdir(parents=True, exist_ok=True)
+                access_token_file = kaggle_dir / 'access_token'
+                with open(access_token_file, 'w') as f:
+                    f.write(token)
+                access_token_file.chmod(0o600)
+            except PermissionError:
+                continue
         return
 
     # Legacy: username/key pair
@@ -106,9 +114,6 @@ def _setup_kaggle_credentials():
 
     if not username or not key:
         return
-
-    # Try both home dir and /root (for Colab)
-    possible_dirs = [Path.home() / '.kaggle', Path('/root/.kaggle')]
 
     for kaggle_dir in possible_dirs:
         kaggle_json = kaggle_dir / 'kaggle.json'
