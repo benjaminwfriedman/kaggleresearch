@@ -54,15 +54,15 @@ def select_strategy(
     with open(prompt_template, 'r') as f:
         prompt = f.read()
 
-    # Fill in template variables
-    prompt = prompt.replace("{competition_name}", competition_meta.get('name', 'Unknown'))
-    prompt = prompt.replace("{problem_type}", competition_meta.get('problem_type', 'unknown'))
-    prompt = prompt.replace("{metric}", competition_meta.get('metric', 'unknown'))
-    prompt = prompt.replace("{metric_direction}", competition_meta.get('metric_direction', 'higher_better'))
-    prompt = prompt.replace("{dataset_description}", competition_meta.get('description', 'No description'))
+    # Fill in template variables (use 'or' to handle None values)
+    prompt = prompt.replace("{competition_name}", competition_meta.get('name') or 'Unknown')
+    prompt = prompt.replace("{problem_type}", competition_meta.get('problem_type') or 'unknown')
+    prompt = prompt.replace("{metric}", competition_meta.get('metric') or 'unknown')
+    prompt = prompt.replace("{metric_direction}", competition_meta.get('metric_direction') or 'higher_better')
+    prompt = prompt.replace("{dataset_description}", competition_meta.get('description') or 'No description')
     prompt = prompt.replace("{baseline_score}", str(baseline_score))
-    prompt = prompt.replace("{baseline_model}", competition_meta.get('baseline_model', 'LightGBM'))
-    prompt = prompt.replace("{paper_summaries}", papers_summary)
+    prompt = prompt.replace("{baseline_model}", competition_meta.get('baseline_model') or 'LightGBM')
+    prompt = prompt.replace("{paper_summaries}", papers_summary or '')
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
@@ -98,11 +98,11 @@ def generate_ideas_md(
     with open(prompt_template, 'r') as f:
         prompt = f.read()
 
-    prompt = prompt.replace("{competition_name}", competition_meta.get('name', 'Unknown'))
-    prompt = prompt.replace("{problem_type}", competition_meta.get('problem_type', 'unknown'))
-    prompt = prompt.replace("{strategy_md}", strategy_md)
+    prompt = prompt.replace("{competition_name}", competition_meta.get('name') or 'Unknown')
+    prompt = prompt.replace("{problem_type}", competition_meta.get('problem_type') or 'unknown')
+    prompt = prompt.replace("{strategy_md}", strategy_md or '')
     prompt = prompt.replace("{baseline_score}", str(baseline_score))
-    prompt = prompt.replace("{paper_summaries}", papers_summary)
+    prompt = prompt.replace("{paper_summaries}", papers_summary or '')
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
