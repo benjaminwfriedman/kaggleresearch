@@ -4,8 +4,9 @@ All state is saved to Google Drive for Colab resilience.
 """
 
 import json
+import shutil
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 
@@ -24,7 +25,7 @@ class BranchInfo:
 @dataclass
 class CheckpointState:
     """Complete checkpoint state for session recovery."""
-    phase: str  # "bootstrap", "literature", "exploit", "reresearch", "branch_compare"
+    phase: str  # "bootstrap", "literature", "exploit", "reresearch", "branch_compare", "halted"
     current_branch: str = "main"
     best_score: float = 0.0
     baseline_score: float = 0.0
@@ -39,6 +40,10 @@ class CheckpointState:
     competition_slug: str = ""
     last_updated: str = field(default_factory=lambda: datetime.now().isoformat())
     session_start: str = field(default_factory=lambda: datetime.now().isoformat())
+    # Tree navigation state
+    run_id: str = ""  # Unique ID for this research run (e.g., "run-001")
+    current_node_id: str = ""  # Current position in idea tree
+    exploration_mode: str = "df"  # "df" (depth-first) or "bf" (breadth-first)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -116,7 +121,9 @@ def detect_phase(checkpoint: Optional[CheckpointState]) -> str:
 def create_initial_checkpoint(
     competition_slug: str,
     problem_type: str,
-    baseline_score: float
+    baseline_score: float,
+    run_id: str = "",
+    exploration_mode: str = "df"
 ) -> CheckpointState:
     """
     Create initial checkpoint after bootstrap phase.
@@ -125,6 +132,8 @@ def create_initial_checkpoint(
         competition_slug: Kaggle competition slug
         problem_type: Detected problem type
         baseline_score: Score from baseline model
+        run_id: Unique ID for this research run
+        exploration_mode: "df" (depth-first) or "bf" (breadth-first)
 
     Returns:
         New CheckpointState ready for literature phase
@@ -135,6 +144,8 @@ def create_initial_checkpoint(
         problem_type=problem_type,
         baseline_score=baseline_score,
         best_score=baseline_score,
+        run_id=run_id,
+        exploration_mode=exploration_mode,
     )
 
 
@@ -248,3 +259,121 @@ def update_checkpoint_after_branch_comparison(
     checkpoint.reresearch_attempts = 0  # Reset for new branch
 
     return checkpoint
+
+
+def generate_run_id(project_dir: Path) -> str:
+    """
+    Generate a unique run ID for a new research session.
+
+    Reads the archive manifest to determine the next run number.
+
+    Args:
+        project_dir: Path to the project directory
+
+    Returns:
+        New run ID (e.g., "run-001", "run-002")
+    """
+    manifest_path = project_dir / 'archive_manifest.json'
+
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            run_count = len(manifest) + 1
+        except (json.JSONDecodeError, IOError):
+            run_count = 1
+    else:
+        run_count = 1
+
+    return f"run-{run_count:03d}"
+
+
+def archive_and_reset(project_dir: Path, competition_slug: str) -> str:
+    """
+    Archive current run and prepare for fresh start.
+
+    Moves all state files to an archive folder, preserving them for reference.
+    Git branches are preserved (searchable via branch naming convention).
+
+    Args:
+        project_dir: Path to the project directory
+        competition_slug: Kaggle competition slug
+
+    Returns:
+        New run_id for the fresh session
+    """
+    # Generate archive name with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    # Find current run_id from checkpoint
+    checkpoint_path = project_dir / 'checkpoint.json'
+    if checkpoint_path.exists():
+        checkpoint = load_checkpoint(checkpoint_path)
+        old_run_id = checkpoint.run_id if checkpoint and checkpoint.run_id else "unknown"
+    else:
+        old_run_id = "unknown"
+
+    archive_name = f"archive/{old_run_id}-{timestamp}"
+    archive_dir = project_dir / archive_name
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    # Files to archive (move, not copy - to indicate fresh start)
+    files_to_archive = [
+        'checkpoint.json',
+        'idea_tree.json',
+        'IDEAS.md',
+        'STRATEGY.md',
+        'experiment_log.db',
+    ]
+
+    archived_files = []
+    for filename in files_to_archive:
+        src = project_dir / filename
+        if src.exists():
+            dst = archive_dir / filename
+            shutil.move(str(src), str(dst))
+            archived_files.append(filename)
+
+    # Update archive manifest
+    manifest_path = project_dir / 'archive_manifest.json'
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (json.JSONDecodeError, IOError):
+            manifest = []
+    else:
+        manifest = []
+
+    manifest.append({
+        'run_id': old_run_id,
+        'archived_at': timestamp,
+        'archive_path': str(archive_dir),
+        'competition': competition_slug,
+        'files': archived_files,
+    })
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    # Generate new run_id
+    new_run_id = f"run-{len(manifest) + 1:03d}"
+
+    print(f"✓ Archived previous run: {old_run_id} → {archive_name}")
+    print(f"  Files archived: {', '.join(archived_files)}")
+    print(f"✓ Starting fresh with run_id: {new_run_id}")
+
+    return new_run_id
+
+
+def get_or_create_run_id(project_dir: Path, checkpoint: Optional[CheckpointState]) -> str:
+    """
+    Get existing run_id from checkpoint or create a new one.
+
+    Args:
+        project_dir: Path to the project directory
+        checkpoint: Loaded checkpoint state or None
+
+    Returns:
+        Run ID string
+    """
+    if checkpoint and checkpoint.run_id:
+        return checkpoint.run_id
+
+    return generate_run_id(project_dir)

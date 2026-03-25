@@ -81,6 +81,42 @@ def get_current_branch(repo_path: Path) -> str:
     return output if success else "main"
 
 
+def get_current_commit(repo_path: Path) -> str:
+    """
+    Get the current commit SHA.
+
+    Args:
+        repo_path: Path to the repository
+
+    Returns:
+        Commit SHA or empty string if not a git repo
+    """
+    success, output = run_git_command(repo_path, 'rev-parse', 'HEAD')
+    return output if success else ""
+
+
+def git_checkout(repo_path: Path, ref: str) -> Tuple[bool, str]:
+    """
+    Checkout a specific commit or branch.
+
+    Args:
+        repo_path: Path to the repository
+        ref: Commit SHA or branch name to checkout
+
+    Returns:
+        Tuple of (success, message)
+    """
+    if not ref:
+        return False, "No ref specified"
+
+    success, output = run_git_command(repo_path, 'checkout', ref)
+
+    if success:
+        return True, f"Checked out: {ref[:8] if len(ref) > 8 else ref}"
+
+    return False, f"Failed to checkout {ref}: {output}"
+
+
 def archive_current_branch(
     repo_path: Path,
     branch_name: str

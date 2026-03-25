@@ -169,7 +169,8 @@ def render_summary(
     log_path: Path,
     checkpoint: Dict[str, Any],
     baseline_score: float,
-    strategy_md_path: Optional[Path] = None
+    strategy_md_path: Optional[Path] = None,
+    tree_path: Optional[Path] = None
 ) -> str:
     """
     Render the final summary after the loop completes.
@@ -179,6 +180,7 @@ def render_summary(
         checkpoint: Checkpoint state dict
         baseline_score: Baseline score
         strategy_md_path: Optional path to STRATEGY.md
+        tree_path: Optional path to idea_tree.json
 
     Returns:
         Markdown string for display
@@ -268,7 +270,62 @@ def render_summary(
     else:
         md += "*No winning commits*\n"
 
+    # Exploration tree
+    if tree_path and Path(tree_path).exists():
+        md += "\n## Exploration Tree\n\n"
+        md += render_idea_tree(tree_path, checkpoint.get('metric_direction', 'higher_better'))
+
+    # Run info
+    md += "\n## Run Information\n\n"
+    md += f"- **Run ID**: {checkpoint.get('run_id', 'N/A')}\n"
+    md += f"- **Exploration Mode**: {checkpoint.get('exploration_mode', 'df')}\n"
+    md += f"- **Competition**: {checkpoint.get('competition_slug', 'N/A')}\n"
+    md += f"- **Phase**: {checkpoint.get('phase', 'N/A')}\n"
+
     return md
+
+
+def render_idea_tree(tree_path: Path, metric_direction: str = 'higher_better') -> str:
+    """
+    Render the idea exploration tree as markdown.
+
+    Args:
+        tree_path: Path to idea_tree.json
+        metric_direction: "higher_better" or "lower_better"
+
+    Returns:
+        Markdown string with tree visualization
+    """
+    try:
+        from .idea_tree import IdeaTree
+
+        tree = IdeaTree(tree_path)
+        if not tree.load():
+            return "*No exploration tree found*\n"
+
+        # Get tree stats
+        stats = tree.count_by_status()
+        md = f"**Nodes**: {len(tree.nodes)} | "
+        md += f"**Max Depth**: {tree.get_max_depth()} | "
+        md += f"**Improved**: {stats.get('improved', 0)} | "
+        md += f"**Crashed**: {stats.get('crashed', 0)}\n\n"
+
+        # Render ASCII tree
+        md += "```\n"
+        md += tree.render_tree(metric_direction)
+        md += "\n```\n"
+
+        # Best path
+        best_path = tree.get_improved_path(metric_direction)
+        if best_path:
+            md += "\n**Best Path**: "
+            md += " → ".join([f"{n.idea_title} ({n.score:.4f})" if n.score else n.idea_title for n in best_path])
+            md += "\n"
+
+        return md
+
+    except Exception as e:
+        return f"*Error loading tree: {e}*\n"
 
 
 def _escape_html(text: str) -> str:
