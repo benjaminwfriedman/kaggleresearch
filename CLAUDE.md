@@ -134,3 +134,13 @@ When modifying experiment logic, update:
 When changing idea/strategy management:
 1. `utils/strategy.py` - IDEAS.md parsing and status updates
 2. `utils/reresearch.py` - re-research decision logic
+
+
+## Commiting, Branching and PRs
+
+- Create a descriptive branch name 
+    - feature/{..}
+    - bug/{..}
+    - refactor/{..}
+
+- We don't credit claude in Commits or PRs
