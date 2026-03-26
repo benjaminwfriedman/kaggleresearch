@@ -42,7 +42,8 @@ def implement_idea(
     idea: Idea,
     train_py_path: Path,
     strategy_md_path: Path,
-    client: Any  # Anthropic client
+    client: Any,  # Anthropic client
+    max_retries: int = 2
 ) -> str:
     """
     Use LLM to implement an idea by modifying train.py.
@@ -52,6 +53,7 @@ def implement_idea(
         train_py_path: Path to current train.py
         strategy_md_path: Path to STRATEGY.md
         client: Anthropic API client
+        max_retries: Number of retries if validation fails
 
     Returns:
         Modified train.py content
@@ -68,6 +70,10 @@ def implement_idea(
     with open(prompt_path, 'r') as f:
         system_prompt = f.read()
 
+    # Calculate original file stats
+    original_lines = len(current_train_py.split('\n'))
+    original_chars = len(current_train_py)
+
     # Format the idea
     idea_text = f"""## IDEA: {idea.title}
 Source: {idea.source}
@@ -79,7 +85,7 @@ Implementation: {idea.implementation}
 Validation: {idea.validation}
 ==="""
 
-    user_prompt = f"""Here is the current train.py:
+    user_prompt = f"""Here is the current train.py ({original_lines} lines, {original_chars} characters):
 
 ```python
 {current_train_py}
@@ -93,26 +99,60 @@ Here is the IDEA to implement:
 
 {idea_text}
 
-Return ONLY the complete modified train.py file. No explanations, no markdown fences, just the Python code."""
+CRITICAL: Return the COMPLETE modified train.py file. The output must:
+1. Be approximately {original_lines} lines (similar to input)
+2. Include `def main():` function
+3. End with `if __name__ == "__main__":` block
+4. No explanations, no markdown fences, just the Python code."""
 
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=8000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}]
-    )
+    for attempt in range(max_retries + 1):
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=16000,  # Increased from 8000 to prevent truncation
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}]
+        )
 
-    response = message.content[0].text
+        response = message.content[0].text
 
-    # Clean up response - remove markdown fences if present
-    if response.startswith('```python'):
-        response = response[9:]
-    if response.startswith('```'):
-        response = response[3:]
-    if response.endswith('```'):
-        response = response[:-3]
+        # Clean up response - remove markdown fences if present
+        if response.startswith('```python'):
+            response = response[9:]
+        if response.startswith('```'):
+            response = response[3:]
+        if response.endswith('```'):
+            response = response[:-3]
 
-    return response.strip()
+        response = response.strip()
+
+        # Quick validation check
+        has_main = 'def main(' in response
+        has_name_check = 'if __name__' in response
+        reasonable_length = len(response) > original_chars * 0.5
+
+        if has_main and has_name_check and reasonable_length:
+            return response
+
+        if attempt < max_retries:
+            print(f"  Code generation attempt {attempt + 1} incomplete (main={has_main}, __name__={has_name_check}, len={len(response)}/{original_chars}). Retrying...")
+            # Add explicit retry prompt
+            user_prompt = f"""Your previous response was incomplete. It was missing:
+{'' if has_main else '- def main(): function'}
+{'' if has_name_check else '- if __name__ == "__main__": block'}
+{'' if reasonable_length else f'- Response too short ({len(response)} chars vs {original_chars} expected)'}
+
+Please try again. Here is the current train.py ({original_lines} lines):
+
+```python
+{current_train_py}
+```
+
+IDEA to implement:
+{idea_text}
+
+Return the COMPLETE file with ALL code including def main() and if __name__ == "__main__":"""
+
+    return response
 
 
 def validate_patch(
