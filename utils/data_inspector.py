@@ -219,6 +219,9 @@ def _infer_problem_type(
         if any(x in metric_lower for x in ['iou', 'dice', 'segment']):
             return ('image-segmentation',
                     f"Found {image_count} images and segmentation metric. This is an image segmentation problem.")
+        if any(x in metric_lower for x in ['rmse', 'mse', 'mae', 'mape', 'rmsle', 'r2', 'r-squared']):
+            return ('image-regression',
+                    f"Found {image_count} images with regression metric ({metric}). This is an image regression problem.")
         return ('image-classification',
                 f"Found {image_count} images. This is an image classification problem.")
 

@@ -86,18 +86,32 @@ These packages are pre-installed. Use them freely:
 
 ## Baseline Model Guidelines
 
-Choose the simplest effective approach:
+Choose the simplest effective approach based on the problem type:
 
 | Problem Type | Recommended Baseline |
 |--------------|---------------------|
-| tabular-classification | LightGBM with default params |
+| tabular-binary-classification | LightGBM with binary objective |
+| tabular-multiclass-classification | LightGBM with multiclass objective |
+| tabular-multilabel-classification | LightGBM per-label or MultiOutputClassifier |
 | tabular-regression | LightGBM with objective='regression' |
-| image-classification | timm ResNet18 pretrained |
+| tabular-multi-target-regression | LightGBM MultiOutputRegressor or per-target |
+| image-binary-classification | timm ResNet18 pretrained, BCE loss |
+| image-multiclass-classification | timm ResNet18 pretrained, CE loss |
+| image-multilabel-classification | timm ResNet18 pretrained, BCE loss |
+| image-regression | timm ResNet18 pretrained, MSE loss |
+| image-multi-target-regression | timm ResNet18 pretrained, MSE loss, multiple outputs |
 | image-segmentation | segmentation_models_pytorch UNet |
-| nlp-classification | DistilBERT fine-tuning |
+| image-object-detection | torchvision FasterRCNN or YOLO |
+| nlp-binary-classification | DistilBERT fine-tuning |
+| nlp-multiclass-classification | DistilBERT fine-tuning |
 | nlp-regression | DistilBERT with regression head |
+| nlp-token-classification | DistilBERT for token classification |
 | audio-classification | Mel spectrogram + timm EfficientNet |
-| time-series | LightGBM with lag features |
+| audio-regression | Mel spectrogram + CNN regression head |
+| time-series-forecasting | LightGBM with lag features |
+| time-series-classification | LightGBM with lag/rolling features |
+| recommender-system | Matrix factorization or LightGBM |
+| graph-* | PyTorch Geometric GCN |
 
 ## Critical Requirements
 

@@ -385,6 +385,7 @@ def get_template_for_problem_type(problem_type: str) -> str:
         'tabular-classification': 'tabular_classification.py',
         'tabular-regression': 'tabular_regression.py',
         'image-classification': 'image_classification.py',
+        'image-regression': 'image_regression.py',
         'image-segmentation': 'image_segmentation.py',
         'nlp-classification': 'nlp_classification.py',
         'nlp-regression': 'nlp_regression.py',

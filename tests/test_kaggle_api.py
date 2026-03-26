@@ -167,6 +167,11 @@ class TestGetTemplateForProblemType:
         template = get_template_for_problem_type("image-classification")
         assert template == "image_classification.py"
 
+    def test_image_regression(self):
+        """Image regression template."""
+        template = get_template_for_problem_type("image-regression")
+        assert template == "image_regression.py"
+
     def test_image_segmentation(self):
         """Image segmentation template."""
         template = get_template_for_problem_type("image-segmentation")

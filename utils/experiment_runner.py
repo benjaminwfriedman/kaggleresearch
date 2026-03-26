@@ -567,12 +567,74 @@ def generate_baseline(
     print("  Inspecting competition data structure...")
     inspection = inspect_competition_data(data_dir, metric)
     data_structure = format_inspection_for_prompt(inspection)
-    problem_type = inspection.inferred_problem_type
 
-    print(f"  Inferred problem type: {problem_type}")
-    print(f"  Reasoning: {inspection.problem_type_reasoning}")
+    # Step 1: Determine problem type
+    print("  Determining problem type...")
+    problem_type_prompt = f"""Based on the following competition information, determine the problem type.
 
-    # Load the baseline generator prompt
+**Competition:** {competition_name}
+**Metric:** {metric} ({metric_direction})
+
+**Data Structure:**
+{data_structure}
+
+Classify this as ONE of the following problem types:
+
+**Tabular:**
+- tabular-binary-classification
+- tabular-multiclass-classification
+- tabular-multilabel-classification
+- tabular-regression
+- tabular-multi-target-regression
+
+**Image:**
+- image-binary-classification
+- image-multiclass-classification
+- image-multilabel-classification
+- image-regression
+- image-multi-target-regression
+- image-segmentation
+- image-object-detection
+- image-instance-segmentation
+
+**NLP/Text:**
+- nlp-binary-classification
+- nlp-multiclass-classification
+- nlp-multilabel-classification
+- nlp-regression
+- nlp-token-classification (NER)
+- nlp-question-answering
+- nlp-summarization
+- nlp-translation
+
+**Audio:**
+- audio-classification
+- audio-regression
+- audio-speech-recognition
+
+**Time Series:**
+- time-series-forecasting
+- time-series-classification
+- time-series-anomaly-detection
+
+**Other:**
+- recommender-system
+- graph-classification
+- graph-regression
+- reinforcement-learning
+- other
+
+Respond with ONLY the problem type (e.g., "image-multi-target-regression"), nothing else."""
+
+    type_response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=50,
+        messages=[{"role": "user", "content": problem_type_prompt}]
+    )
+    problem_type = type_response.content[0].text.strip().lower()
+    print(f"  Problem type: {problem_type}")
+
+    # Step 2: Load the baseline generator prompt
     prompt_path = Path(__file__).parent.parent / "prompts" / "baseline_generator.md"
     with open(prompt_path, 'r') as f:
         system_prompt = f.read()
@@ -585,7 +647,7 @@ def generate_baseline(
     system_prompt = system_prompt.replace("{id_column}", id_column)
     system_prompt = system_prompt.replace("{data_structure}", data_structure)
 
-    user_prompt = f"""Generate a complete, working train.py baseline for this competition.
+    user_prompt = f"""Generate a complete, working train.py baseline for this **{problem_type}** problem.
 
 Remember:
 1. Use the ACTUAL file paths and column names shown in the data structure
