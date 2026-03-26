@@ -205,7 +205,7 @@ def infer_metric_direction(metric: str) -> str:
     # Metrics where lower is better
     lower_better = [
         'rmse', 'mse', 'mae', 'mape', 'loss', 'error',
-        'log_loss', 'logloss', 'cross_entropy', 'perplexity',
+        'log_loss', 'logloss', 'cross_entropy', 'cross entropy', 'perplexity',
         'rae', 'rse', 'smape'
     ]
 
@@ -289,18 +289,30 @@ def classify_problem_type(meta: CompetitionMeta, data_dir: Path) -> str:
     """
     import pandas as pd
 
+    data_dir = Path(data_dir)
+    metric_lower = meta.metric.lower()
+
+    # Check for audio files first (audio competitions like BirdCLEF have many audio files)
+    audio_extensions = {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac', '.wma'}
+    has_audio = False
+    for ext in audio_extensions:
+        # Use [:1] to just check if any exist without loading all
+        if list(data_dir.rglob(f'*{ext}'))[:1]:
+            has_audio = True
+            break
+
+    if has_audio:
+        return 'audio-classification'
+
     # Check for image files
     image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff'}
-    data_dir = Path(data_dir)
-
     has_images = False
     for ext in image_extensions:
-        if list(data_dir.rglob(f'*{ext}')):
+        if list(data_dir.rglob(f'*{ext}'))[:1]:
             has_images = True
             break
 
     # Check metric for segmentation hints
-    metric_lower = meta.metric.lower()
     if has_images:
         if any(x in metric_lower for x in ['iou', 'dice', 'segment']):
             return 'image-segmentation'

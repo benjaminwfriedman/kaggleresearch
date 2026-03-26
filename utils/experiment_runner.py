@@ -533,3 +533,117 @@ def detect_gpu() -> Tuple[str, bool]:
         pass
 
     return "CPU", False
+
+
+def generate_baseline(
+    data_dir: Path,
+    competition_name: str,
+    metric: str,
+    metric_direction: str,
+    target_column: str,
+    id_column: str,
+    client: Any,
+    max_retries: int = 2
+) -> Tuple[str, str]:
+    """
+    Generate a baseline train.py using the LLM based on data inspection.
+
+    Args:
+        data_dir: Path to the competition data directory
+        competition_name: Name of the competition
+        metric: Evaluation metric name
+        metric_direction: "higher_better" or "lower_better"
+        target_column: Target column name for submission
+        id_column: ID column name for submission
+        client: Anthropic API client
+        max_retries: Number of retries if generation fails
+
+    Returns:
+        Tuple of (train_py_content, problem_type)
+    """
+    from .data_inspector import inspect_competition_data, format_inspection_for_prompt
+
+    # Inspect the data
+    print("  Inspecting competition data structure...")
+    inspection = inspect_competition_data(data_dir, metric)
+    data_structure = format_inspection_for_prompt(inspection)
+    problem_type = inspection.inferred_problem_type
+
+    print(f"  Inferred problem type: {problem_type}")
+    print(f"  Reasoning: {inspection.problem_type_reasoning}")
+
+    # Load the baseline generator prompt
+    prompt_path = Path(__file__).parent.parent / "prompts" / "baseline_generator.md"
+    with open(prompt_path, 'r') as f:
+        system_prompt = f.read()
+
+    # Fill in the template
+    system_prompt = system_prompt.replace("{competition_name}", competition_name)
+    system_prompt = system_prompt.replace("{metric}", metric)
+    system_prompt = system_prompt.replace("{metric_direction}", metric_direction)
+    system_prompt = system_prompt.replace("{target_column}", target_column)
+    system_prompt = system_prompt.replace("{id_column}", id_column)
+    system_prompt = system_prompt.replace("{data_structure}", data_structure)
+
+    user_prompt = f"""Generate a complete, working train.py baseline for this competition.
+
+Remember:
+1. Use the ACTUAL file paths and column names shown in the data structure
+2. The code must be syntactically correct Python
+3. Include proper error handling for data loading
+4. Return ONLY the Python code, no explanations
+
+Generate the train.py now:"""
+
+    for attempt in range(max_retries + 1):
+        print(f"  Generating baseline code (attempt {attempt + 1}/{max_retries + 1})...")
+
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=16000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}]
+        )
+
+        response = message.content[0].text
+
+        # Clean up response
+        if response.startswith('```python'):
+            response = response[9:]
+        if response.startswith('```'):
+            response = response[3:]
+        if response.endswith('```'):
+            response = response[:-3]
+
+        response = response.strip()
+
+        # Validate
+        has_main = 'def main(' in response
+        has_name_check = 'if __name__' in response
+        has_data_dir = 'DATA_DIR' in response
+
+        if has_main and has_name_check and has_data_dir:
+            # Try to compile to check syntax
+            try:
+                compile(response, '<train.py>', 'exec')
+                return response, problem_type
+            except SyntaxError as e:
+                print(f"  Syntax error: {e}")
+                if attempt < max_retries:
+                    user_prompt = f"""Your previous code had a syntax error: {e}
+
+Please fix the error and generate the complete train.py again.
+Remember to include def main() and if __name__ == "__main__":"""
+                continue
+
+        if attempt < max_retries:
+            print(f"  Generated code incomplete (main={has_main}, __name__={has_name_check}). Retrying...")
+            user_prompt = f"""Your previous response was incomplete. It was missing:
+{'' if has_main else '- def main(): function'}
+{'' if has_name_check else '- if __name__ == "__main__": block'}
+{'' if has_data_dir else '- DATA_DIR = Path("data") constant'}
+
+Please generate the COMPLETE train.py file."""
+
+    # Return whatever we have on last attempt
+    return response, problem_type

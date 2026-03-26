@@ -1,12 +1,13 @@
 """
 Main research loop for KaggleResearch.
 
-This module runs the core experiment cycle:
-1. Select next node to explore (UCB1 or sequential)
-2. Generate/implement experiment
-3. Run and evaluate
-4. Update tree, backtrack if needed
-5. Re-research when exhausted
+This module runs the unified research cycle:
+1. Initial literature review (if STRATEGY.md doesn't exist)
+2. Select next node to explore (UCB1 or sequential)
+3. Generate/implement experiment
+4. Run and evaluate
+5. Update tree, backtrack if needed
+6. Re-research when exhausted or plateau detected
 """
 
 import time
@@ -21,7 +22,8 @@ from .checkpoint import (
 )
 from .strategy import (
     parse_ideas_md, update_idea_status, append_learning_log,
-    get_next_pending_idea, format_learning_log_entry
+    get_next_pending_idea, format_learning_log_entry,
+    select_strategy, generate_ideas_md
 )
 from .plateau import plateau_triggered, summarise_failures, ExperimentResult
 from .experiment_runner import (
@@ -32,6 +34,10 @@ from .experiment_runner import (
 )
 from .branching import get_current_branch, git_checkout, get_current_commit
 from .idea_tree import IdeaTree
+from .literature import (
+    search_papers, cache_papers, load_cached_papers,
+    save_search_history, build_search_query, format_papers_for_prompt
+)
 
 
 @dataclass
@@ -62,6 +68,92 @@ class ResearchConfig:
 
     # Metric
     metric_direction: str = "higher_better"
+
+
+def do_initial_literature_review(
+    config: ResearchConfig,
+    checkpoint: CheckpointState,
+    client: Any
+) -> None:
+    """
+    Perform initial literature review to create STRATEGY.md and IDEAS.md.
+
+    This runs once at the start of research if STRATEGY.md doesn't exist.
+    Uses broad search based on problem type (unlike re-research which is failure-focused).
+
+    Args:
+        config: Research configuration
+        checkpoint: Current checkpoint state
+        client: Anthropic API client
+    """
+    print("\n" + "=" * 50)
+    print("=== Initial Literature Review ===")
+    print("=" * 50)
+
+    comp_meta = checkpoint.competition_meta or {}
+
+    # Build search query based on problem type
+    query = build_search_query(
+        problem_type=checkpoint.problem_type,
+        metric=comp_meta.get('metric', 'accuracy')
+    )
+    print(f"Search query: {query}")
+
+    # Search for papers
+    print("\nSearching academic literature...")
+    papers = search_papers(
+        query=query,
+        n=config.literature_depth,
+        problem_type=checkpoint.problem_type
+    )
+    print(f"  Found {len(papers)} relevant papers")
+
+    # Cache papers for later re-research
+    papers_cache = config.literature_dir / 'papers.json'
+    cache_papers(papers, papers_cache)
+    save_search_history(query, config.literature_dir / 'search_history.json')
+
+    # Format for prompt
+    papers_summary = format_papers_for_prompt(papers)
+
+    # Generate strategy
+    print("\nGenerating strategy...")
+    strategy_content = select_strategy(
+        papers_summary=papers_summary,
+        competition_meta={
+            'name': comp_meta.get('name') or checkpoint.competition_slug,
+            'problem_type': checkpoint.problem_type,
+            'metric': comp_meta.get('metric') or 'accuracy',
+            'metric_direction': comp_meta.get('metric_direction') or 'higher_better',
+            'description': '',
+            'baseline_model': 'Generated baseline',
+        },
+        baseline_score=checkpoint.baseline_score,
+        client=client
+    )
+
+    with open(config.strategy_path, 'w') as f:
+        f.write(strategy_content)
+    print(f"  Created STRATEGY.md")
+
+    # Generate IDEAS.md
+    print("\nGenerating experiment ideas...")
+    ideas_content = generate_ideas_md(
+        papers_summary=papers_summary,
+        strategy_md=strategy_content,
+        competition_meta={
+            'name': comp_meta.get('name') or checkpoint.competition_slug,
+            'problem_type': checkpoint.problem_type,
+        },
+        baseline_score=checkpoint.baseline_score,
+        client=client
+    )
+
+    with open(config.ideas_path, 'w') as f:
+        f.write(ideas_content)
+    print(f"  Created IDEAS.md")
+
+    print("\n" + "=" * 50)
 
 
 @dataclass
@@ -134,7 +226,6 @@ def run_reresearch(
     """
     from .literature import load_cached_papers, format_papers_for_prompt
     from .strategy import generate_ideas_md, archive_strategy
-    from .kaggle_api import get_template_for_problem_type
     from .branching import archive_current_branch, start_new_branch, get_next_branch_version
     from .checkpoint import update_checkpoint_for_branch
     from .reresearch import (
@@ -223,10 +314,16 @@ def run_reresearch(
         archive_current_branch(config.repo_dir, old_branch)
         archive_strategy(config.strategy_path, config.literature_dir / 'archived_strategies.md')
 
-        template_name = get_template_for_problem_type(checkpoint.problem_type)
-        template_path = config.kaggleresearch_path / 'templates' / template_name
-        with open(template_path, 'r') as f:
-            baseline_train = f.read()
+        # Load cached baseline (generated during bootstrap)
+        baseline_train_path = config.project_dir / 'baseline_train.py'
+        if baseline_train_path.exists():
+            with open(baseline_train_path, 'r') as f:
+                baseline_train = f.read()
+        else:
+            # Fallback: read from git first commit
+            print("  Warning: baseline_train.py not found, using current train.py")
+            with open(config.repo_dir / 'train.py', 'r') as f:
+                baseline_train = f.read()
 
         start_new_branch(config.repo_dir, new_branch, baseline_train)
 
@@ -495,12 +592,18 @@ def run_research(
     display_callback=None
 ) -> ResearchResult:
     """
-    Run the main research loop.
+    Run the unified research loop.
+
+    This function handles the complete research cycle:
+    1. Initial literature review (if STRATEGY.md doesn't exist)
+    2. Experiment loop (implement ideas, run, evaluate)
+    3. Re-research on plateau or idea exhaustion
+    4. Branch management for strategy pivots
 
     Args:
         config: Research configuration
         client: Anthropic API client
-        display_callback: Optional callback(experiments, checkpoint) for UI updates
+        display_callback: Optional callback(experiments, checkpoint, tree) for UI updates
 
     Returns:
         ResearchResult with final state
@@ -508,7 +611,18 @@ def run_research(
     # Load checkpoint
     checkpoint = load_checkpoint(config.checkpoint_path)
     if checkpoint is None:
-        raise ValueError("No checkpoint found. Run bootstrap phase first.")
+        raise ValueError("No checkpoint found. Run Setup Research first.")
+
+    # Ensure metric direction is set
+    comp_meta = checkpoint.competition_meta or {}
+    config.metric_direction = comp_meta.get('metric_direction', 'higher_better')
+
+    # Initial literature review if STRATEGY.md doesn't exist
+    if not config.strategy_path.exists():
+        do_initial_literature_review(config, checkpoint, client)
+        # Update checkpoint phase to research
+        checkpoint.phase = 'research'
+        save_checkpoint(config.checkpoint_path, checkpoint)
 
     # Initialize tree
     tree = initialize_tree(config.tree_path, config.repo_dir, checkpoint)
@@ -519,7 +633,7 @@ def run_research(
     session_start = datetime.now()
     exit_reason = "completed"
 
-    print("=== Research Loop ===")
+    print("\n=== Research Loop ===")
     print(f"Run ID: {checkpoint.run_id}")
     print(f"Exploration mode: {checkpoint.exploration_mode}")
     print(f"Starting from: {checkpoint.best_score:.6f}")

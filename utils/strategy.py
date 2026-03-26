@@ -353,17 +353,14 @@ def sanitize_idea_block(block: str) -> Optional[str]:
             title = line.replace('## IDEA:', '').strip()
             title_line_idx = i
             break
-        elif '**IDEA:' in line or '**Idea:' in line:
-            # Convert markdown bold to proper format
-            title = re.sub(r'\*\*[Ii]dea:\*?\*?\s*', '', line).strip()
-            title_line_idx = i
-            break
-        elif i == 0 and line.strip() and not line.startswith('#'):
-            # First line might be title without formatting
-            title = line.strip().rstrip(':')
+        elif '**IDEA:' in line or '**Idea:' in line or '**idea:' in line:
+            # Convert markdown bold to proper format - strip both prefix and trailing **
+            title = re.sub(r'\*\*[Ii][Dd][Ee][Aa]:\s*', '', line)
+            title = title.strip().rstrip('*').strip()
             title_line_idx = i
             break
 
+    # If no IDEA: marker found, this isn't a valid idea block
     if not title:
         return None
 

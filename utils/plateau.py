@@ -67,6 +67,10 @@ def plateau_triggered_directional(
     """
     Check if plateau triggered, accounting for metric direction.
 
+    A plateau is triggered when:
+    1. The most recent score hasn't improved enough over the best historical score, OR
+    2. The most recent score is worse than the best in the window (regression)
+
     Args:
         recent_scores: List of recent experiment scores
         window: Number of experiments to consider
@@ -74,7 +78,7 @@ def plateau_triggered_directional(
         higher_is_better: True if higher scores are better
 
     Returns:
-        True if plateau detected
+        True if plateau detected (no progress or regression)
     """
     valid_scores = [s for s in recent_scores if s is not None]
 
@@ -82,18 +86,25 @@ def plateau_triggered_directional(
         return False
 
     window_scores = valid_scores[-window:]
+    most_recent = window_scores[-1]
 
     if higher_is_better:
         best_in_window = max(window_scores)
+        # Regression: most recent is worse than best
+        if most_recent < best_in_window:
+            return True
         reference = min(window_scores)
     else:
         best_in_window = min(window_scores)  # Lower is better
+        # Regression: most recent is worse (higher) than best
+        if most_recent > best_in_window:
+            return True
         reference = max(window_scores)
 
     if reference == 0:
         reference = 1e-10
 
-    # For "lower is better", improvement is when score decreases
+    # Check for plateau (lack of improvement)
     if higher_is_better:
         gain_pct = (best_in_window - reference) / abs(reference) * 100
     else:
@@ -184,7 +195,10 @@ def identify_failure_patterns(experiments: List[ExperimentResult]) -> List[str]:
         if matches >= 2:
             patterns.append(f"Multiple {theme} changes failed ({matches} experiments)")
 
-    # Check for crash rate
+    # Check for crash rate (guard against empty list)
+    if not experiments:
+        return patterns
+
     crash_rate = sum(1 for e in experiments if e.status == 'crashed') / len(experiments)
     if crash_rate > 0.3:
         patterns.append(f"High crash rate ({crash_rate:.0%}) suggests implementation issues")

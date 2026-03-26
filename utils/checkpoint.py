@@ -25,7 +25,7 @@ class BranchInfo:
 @dataclass
 class CheckpointState:
     """Complete checkpoint state for session recovery."""
-    phase: str  # "bootstrap", "literature", "exploit", "reresearch", "branch_compare", "halted"
+    phase: str  # "bootstrap", "research", "halted"
     current_branch: str = "main"
     best_score: float = 0.0
     baseline_score: float = 0.0
@@ -122,12 +122,17 @@ def detect_phase(checkpoint: Optional[CheckpointState]) -> str:
         checkpoint: Loaded checkpoint state or None
 
     Returns:
-        Phase string: "bootstrap", "literature", "exploit", "reresearch", "branch_compare"
+        Phase string: "bootstrap", "research", "halted"
     """
     if checkpoint is None:
         return "bootstrap"
 
-    return checkpoint.phase
+    # Map old phase names to new simplified phases for backward compatibility
+    phase = checkpoint.phase
+    if phase in ('literature', 'exploit', 'reresearch', 'branch_compare'):
+        return 'research'
+
+    return phase
 
 
 def create_initial_checkpoint(
@@ -139,7 +144,7 @@ def create_initial_checkpoint(
     competition_meta: Optional[Dict[str, Any]] = None
 ) -> CheckpointState:
     """
-    Create initial checkpoint after bootstrap phase.
+    Create initial checkpoint after bootstrap/setup phase.
 
     Args:
         competition_slug: Kaggle competition slug
@@ -150,10 +155,10 @@ def create_initial_checkpoint(
         competition_meta: Competition metadata (name, metric, metric_direction)
 
     Returns:
-        New CheckpointState ready for literature phase
+        New CheckpointState ready for research phase
     """
     return CheckpointState(
-        phase="literature",
+        phase="research",
         competition_slug=competition_slug,
         problem_type=problem_type,
         baseline_score=baseline_score,
@@ -200,7 +205,7 @@ def update_checkpoint_after_experiment(
 
 def update_checkpoint_for_reresearch(checkpoint: CheckpointState) -> CheckpointState:
     """
-    Update checkpoint when entering re-research phase.
+    Update checkpoint when entering re-research (still within research phase).
 
     Args:
         checkpoint: Current checkpoint state
@@ -208,7 +213,8 @@ def update_checkpoint_for_reresearch(checkpoint: CheckpointState) -> CheckpointS
     Returns:
         Updated checkpoint state
     """
-    checkpoint.phase = "reresearch"
+    # Stay in research phase - re-research is internal to the loop
+    checkpoint.phase = "research"
     checkpoint.reresearch_attempts += 1
     return checkpoint
 
@@ -238,8 +244,8 @@ def update_checkpoint_for_branch(
         "experiment_count": checkpoint.total_experiments,
     }
 
-    # Set up new branch
-    checkpoint.phase = "branch_compare"
+    # Set up new branch (stay in research phase)
+    checkpoint.phase = "research"
     checkpoint.current_branch = new_branch_name
     checkpoint.strategy_name = new_strategy_name
     checkpoint.ideas_pointer = 0
@@ -268,8 +274,8 @@ def update_checkpoint_after_branch_comparison(
     if loser_branch in checkpoint.branches:
         checkpoint.branches[loser_branch]["status"] = "archived"
 
-    # Continue with winner
-    checkpoint.phase = "exploit"
+    # Continue with winner (stay in research phase)
+    checkpoint.phase = "research"
     checkpoint.current_branch = winner_branch
     checkpoint.reresearch_attempts = 0  # Reset for new branch
 
