@@ -88,9 +88,18 @@ Validation: Loss curves should be smoother, CV score should improve slightly
 **Your Output:**
 The complete train.py with `LEARNING_RATE = 0.01` instead of `LEARNING_RATE = 0.05`.
 
+## CRITICAL Requirements
+
+Your output will be validated. It MUST contain:
+1. **`def main():`** - The main function that runs the training pipeline
+2. **`if __name__ == "__main__":`** - The entry point that calls main()
+
+If your output is missing these, the experiment will crash.
+
 ## Important
 
 - Preserve ALL existing functionality not related to the idea
 - Keep the same code style and formatting
 - Ensure the code will run without syntax errors
 - The output must be valid Python that can be executed
+- **Return the COMPLETE file** - do not truncate or abbreviate any part
