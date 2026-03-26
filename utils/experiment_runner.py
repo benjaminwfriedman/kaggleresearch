@@ -172,11 +172,9 @@ def validate_patch(
         if current_hash != original_metric_py_hash:
             return False, "metric.py was modified — this is forbidden"
 
-    # Check for forbidden imports (packages requiring pip install)
+    # Check for forbidden imports (packages NOT installed by our notebook)
     forbidden_imports = [
-        'catboost',  # Not pre-installed
-        'optuna',    # Not pre-installed
-        'ray',       # Not pre-installed
+        'ray',       # Not pre-installed, heavy dependency
     ]
 
     for forbidden in forbidden_imports:

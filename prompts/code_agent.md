@@ -51,7 +51,12 @@ These packages are pre-installed in the Colab environment. You can import and us
 - tqdm, joblib
 - matplotlib, seaborn, plotly
 
-**DO NOT** use packages not in this list without marking the idea as `Risk: high`
+## FORBIDDEN Packages
+
+**DO NOT use these packages** - they will fail validation:
+- **ray** - not installed, heavy dependency
+
+**DO NOT** use packages not listed above without marking the idea as `Risk: high`
 
 ## Output Format
 
