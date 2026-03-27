@@ -356,6 +356,10 @@ def git_commit(repo_path: Path, message: str, include_submission: bool = True) -
     """
     repo_path = Path(repo_path)
 
+    # Ensure git user identity is configured (required for commits)
+    run_git_command(repo_path, 'config', 'user.email', 'kaggleresearch@local')
+    run_git_command(repo_path, 'config', 'user.name', 'KaggleResearch')
+
     # Check if this is the first commit (no commits yet)
     has_commits, _ = run_git_command(repo_path, 'rev-parse', 'HEAD')
 

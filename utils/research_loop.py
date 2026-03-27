@@ -550,8 +550,16 @@ def run_single_experiment(
     # Determine outcome
     current_branch = get_current_branch(config.repo_dir)
 
+    # Generate branch name for commit messages
+    branch_name = tree.generate_branch_name(
+        new_node.id, checkpoint.competition_slug, checkpoint.run_id
+    )
+
     if score is None:
-        # Crashed
+        # Crashed - commit before restoring so we can recover the attempted code
+        error_short = (error[:50] + '...') if error and len(error) > 50 else (error or 'Unknown')
+        git_commit(config.repo_dir, f"CRASHED [{branch_name}]: {next_idea.title} | {error_short}")
+
         print(f"  CRASHED: {error[:100] if error else 'Unknown error'}")
         restore_train_py(config.repo_dir)
         status = 'crashed'
@@ -566,9 +574,6 @@ def run_single_experiment(
         delta = score - checkpoint.best_score
         print(f"  IMPROVED: {checkpoint.best_score:.6f} -> {score:.6f} ({delta:+.6f})")
 
-        branch_name = tree.generate_branch_name(
-            new_node.id, checkpoint.competition_slug, checkpoint.run_id
-        )
         git_commit(config.repo_dir, f"IMPROVE [{branch_name}]: {next_idea.title} | {checkpoint.best_score:.4f} -> {score:.4f}")
 
         tree.update_status(new_node.id, 'improved', score)
@@ -595,7 +600,9 @@ def run_single_experiment(
             checkpoint.current_node_id = new_node.id
 
     else:
-        # No improvement
+        # No improvement - commit before restoring so we can recover the attempted code
+        git_commit(config.repo_dir, f"NO_IMPROVE [{branch_name}]: {next_idea.title} | {score:.4f} (best: {checkpoint.best_score:.4f})")
+
         print(f"  NO IMPROVEMENT: {score:.6f} (best: {checkpoint.best_score:.6f})")
         restore_train_py(config.repo_dir)
         status = 'no_improvement'
