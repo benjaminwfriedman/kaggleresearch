@@ -426,8 +426,9 @@ def find_best_improvement_commit(repo_path: Path) -> Optional[Dict[str, Any]]:
     """
     import re
 
+    # Get all commits - we'll filter for IMPROVE (not NO_IMPROVE) in Python
     success, output = run_git_command(
-        repo_path, 'log', '--all', '--grep=IMPROVE',
+        repo_path, 'log', '--all',
         '--pretty=format:%H|%s'
     )
 
@@ -444,6 +445,10 @@ def find_best_improvement_commit(repo_path: Path) -> Optional[Dict[str, Any]]:
         parts = line.split('|', 1)
         commit_sha = parts[0]
         message = parts[1] if len(parts) > 1 else ''
+
+        # Only match IMPROVE commits (not NO_IMPROVE or CRASHED)
+        if not message.startswith('IMPROVE '):
+            continue
 
         # Extract score from message format: "... | 0.8373 -> 0.8440"
         score_match = re.search(r'-> ([\d.]+)$', message)
