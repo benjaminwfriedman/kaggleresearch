@@ -36,7 +36,8 @@ from .branching import get_current_branch, git_checkout, get_current_commit
 from .idea_tree import IdeaTree
 from .literature import (
     search_papers, cache_papers, load_cached_papers,
-    save_search_history, build_search_query, format_papers_for_prompt
+    save_search_history, build_search_query, format_papers_for_prompt,
+    generate_search_queries, summarize_train_py
 )
 
 
@@ -82,42 +83,96 @@ def do_initial_literature_review(
     Perform initial literature review to create STRATEGY.md and IDEAS.md.
 
     This runs once at the start of research if STRATEGY.md doesn't exist.
-    Uses broad search based on problem type (unlike re-research which is failure-focused).
+    Uses LLM-generated search queries based on competition context.
 
     Args:
         config: Research configuration
         checkpoint: Current checkpoint state
         client: Anthropic API client
     """
+    from .data_inspector import inspect_competition_data, format_inspection_for_prompt
+
     print("\n" + "=" * 50)
     print("=== Initial Literature Review ===")
     print("=" * 50)
 
     comp_meta = checkpoint.competition_meta or {}
 
-    # Build search query based on problem type
-    query = build_search_query(
-        problem_type=checkpoint.problem_type,
-        metric=comp_meta.get('metric', 'accuracy')
-    )
-    print(f"Search query: {query}")
+    # Get data structure summary
+    print("\nAnalyzing data structure...")
+    data_dir = config.repo_dir / 'data'
+    try:
+        inspection = inspect_competition_data(data_dir, comp_meta.get('metric', 'accuracy'))
+        data_summary = format_inspection_for_prompt(inspection)
+    except Exception as e:
+        print(f"  Warning: Could not inspect data: {e}")
+        data_summary = "Data structure unavailable"
 
-    # Search for papers
+    # Get train.py summary
+    print("Summarizing current approach...")
+    train_py_path = config.repo_dir / 'train.py'
+    if train_py_path.exists():
+        with open(train_py_path, 'r') as f:
+            train_py_content = f.read()
+        try:
+            train_py_summary = summarize_train_py(train_py_content, client)
+        except Exception as e:
+            print(f"  Warning: Could not summarize train.py: {e}")
+            train_py_summary = "Train.py summary unavailable"
+    else:
+        train_py_summary = "No train.py yet"
+
+    # Generate search queries using LLM
+    print("\nGenerating search queries...")
+    try:
+        queries = generate_search_queries(
+            competition_name=comp_meta.get('name') or checkpoint.competition_slug,
+            problem_type=checkpoint.problem_type,
+            metric=comp_meta.get('metric', 'accuracy'),
+            data_summary=data_summary,
+            train_py_summary=train_py_summary,
+            client=client,
+            num_queries=4
+        )
+        for i, q in enumerate(queries, 1):
+            print(f"  Query {i}: {q}")
+    except Exception as e:
+        print(f"  Warning: LLM query generation failed: {e}")
+        # Fallback to simple query builder
+        queries = [build_search_query(
+            problem_type=checkpoint.problem_type,
+            metric=comp_meta.get('metric', 'accuracy')
+        )]
+        print(f"  Fallback query: {queries[0]}")
+
+    # Search for papers using all queries
     print("\nSearching academic literature...")
-    papers = search_papers(
-        query=query,
-        n=config.literature_depth,
-        problem_type=checkpoint.problem_type
-    )
-    print(f"  Found {len(papers)} relevant papers")
+    all_papers = []
+    seen_titles = set()
+
+    for query in queries:
+        papers = search_papers(
+            query=query,
+            n=config.literature_depth // len(queries) + 2,  # Distribute across queries
+            problem_type=checkpoint.problem_type
+        )
+        # Deduplicate
+        for paper in papers:
+            if paper.title.lower() not in seen_titles:
+                seen_titles.add(paper.title.lower())
+                all_papers.append(paper)
+        save_search_history(query, config.literature_dir / 'search_history.json')
+
+    # Limit to literature_depth
+    all_papers = all_papers[:config.literature_depth]
+    print(f"  Found {len(all_papers)} unique papers")
 
     # Cache papers for later re-research
     papers_cache = config.literature_dir / 'papers.json'
-    cache_papers(papers, papers_cache)
-    save_search_history(query, config.literature_dir / 'search_history.json')
+    cache_papers(all_papers, papers_cache)
 
     # Format for prompt
-    papers_summary = format_papers_for_prompt(papers)
+    papers_summary = format_papers_for_prompt(all_papers)
 
     # Generate strategy
     print("\nGenerating strategy...")

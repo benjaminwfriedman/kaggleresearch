@@ -448,6 +448,110 @@ def load_search_history(history_path: Path) -> Set[str]:
         return set()
 
 
+def generate_search_queries(
+    competition_name: str,
+    problem_type: str,
+    metric: str,
+    data_summary: str,
+    train_py_summary: str,
+    client: Any,
+    num_queries: int = 4
+) -> List[str]:
+    """
+    Use LLM to generate targeted search queries based on competition context.
+
+    Args:
+        competition_name: Name of the Kaggle competition
+        problem_type: Classification of the problem (e.g., tabular-binary-classification)
+        metric: Evaluation metric name
+        data_summary: Summary of data structure (columns, types, sizes)
+        train_py_summary: Summary of current train.py approach
+        client: Anthropic API client
+        num_queries: Number of queries to generate
+
+    Returns:
+        List of search query strings
+    """
+    prompt = f"""You are helping with a Kaggle competition. Generate {num_queries} diverse search queries to find relevant academic papers and techniques.
+
+**Competition:** {competition_name}
+**Problem Type:** {problem_type}
+**Metric:** {metric}
+
+**Data Structure:**
+{data_summary}
+
+**Current Approach (train.py):**
+{train_py_summary}
+
+Generate {num_queries} search queries that would help find:
+1. State-of-the-art techniques for this problem type
+2. Feature engineering ideas specific to this data
+3. Model architectures or ensembling strategies
+4. Any domain-specific techniques
+
+Each query should be 3-8 words, suitable for academic paper search (Semantic Scholar, arXiv).
+Avoid generic terms like "machine learning" alone - be specific.
+
+Return ONLY the queries, one per line, no numbering or explanation:"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=500,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    response = message.content[0].text.strip()
+
+    # Parse queries - one per line
+    queries = []
+    for line in response.split('\n'):
+        line = line.strip()
+        # Skip empty lines, numbered lines, or lines that look like explanations
+        if line and not line.startswith(('#', '-', '*')) and len(line) < 100:
+            # Remove any leading numbers like "1." or "1)"
+            import re
+            line = re.sub(r'^\d+[\.\)]\s*', '', line)
+            if line:
+                queries.append(line)
+
+    return queries[:num_queries]
+
+
+def summarize_train_py(train_py_content: str, client: Any) -> str:
+    """
+    Generate a brief summary of train.py for search query context.
+
+    Args:
+        train_py_content: Full train.py file content
+        client: Anthropic API client
+
+    Returns:
+        Brief summary string (2-3 sentences)
+    """
+    # Truncate if too long
+    content = train_py_content[:8000] if len(train_py_content) > 8000 else train_py_content
+
+    prompt = f"""Summarize this ML training script in 2-3 sentences. Focus on:
+- Model type (e.g., LightGBM, neural network)
+- Key features used
+- Any notable techniques (cross-validation, feature engineering)
+
+```python
+{content}
+```
+
+Summary (2-3 sentences only):"""
+
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=200,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    return message.content[0].text.strip()
+
+
 def build_search_query(
     problem_type: str,
     metric: str,
@@ -455,7 +559,8 @@ def build_search_query(
     year: Optional[int] = None
 ) -> str:
     """
-    Build a search query for literature review.
+    Build a simple fallback search query for literature review.
+    Prefer using generate_search_queries() for better results.
 
     Args:
         problem_type: Classification of the problem
@@ -469,15 +574,37 @@ def build_search_query(
     if year is None:
         year = datetime.now().year
 
-    # Map problem types to search terms
+    # Map problem types to search terms - handle both old and new formats
     type_terms = {
-        'tabular-classification': 'tabular data classification gradient boosting',
-        'tabular-regression': 'tabular data regression gradient boosting',
-        'image-classification': 'image classification deep learning CNN',
-        'image-segmentation': 'image segmentation semantic U-Net',
+        # New detailed types
+        'tabular-binary-classification': 'tabular binary classification gradient boosting',
+        'tabular-multiclass-classification': 'tabular multiclass classification gradient boosting',
+        'tabular-multilabel-classification': 'tabular multilabel classification',
+        'tabular-regression': 'tabular regression gradient boosting',
+        'tabular-multi-target-regression': 'tabular multi-target regression',
+        # Image types
+        'image-binary-classification': 'image binary classification CNN deep learning',
+        'image-multiclass-classification': 'image classification CNN deep learning',
+        'image-multilabel-classification': 'image multilabel classification',
+        'image-regression': 'image regression CNN',
+        'image-segmentation': 'image segmentation U-Net',
+        'image-object-detection': 'object detection YOLO',
+        'image-instance-segmentation': 'instance segmentation Mask R-CNN',
+        # NLP types
+        'nlp-binary-classification': 'text binary classification transformer BERT',
+        'nlp-multiclass-classification': 'text classification transformer BERT',
+        'nlp-multilabel-classification': 'text multilabel classification',
+        'nlp-regression': 'text regression transformer',
+        'nlp-token-classification': 'named entity recognition NER',
+        'nlp-question-answering': 'question answering transformer',
+        # Time series
+        'time-series-forecasting': 'time series forecasting prediction',
+        'time-series-classification': 'time series classification',
+        # Legacy types (for backward compatibility)
+        'tabular-classification': 'tabular classification gradient boosting',
+        'image-classification': 'image classification CNN deep learning',
         'nlp-classification': 'text classification transformer BERT',
-        'nlp-regression': 'text regression transformer NLP',
-        'time-series': 'time series forecasting prediction',
+        'time-series': 'time series forecasting',
         'other': 'machine learning',
     }
 
@@ -486,7 +613,7 @@ def build_search_query(
     # Add metric to query
     metric_terms = metric.replace('_', ' ').lower()
 
-    query = f"{base_query} {metric_terms} SOTA {year}"
+    query = f"{base_query} {metric_terms}"
 
     if context:
         # Add context but keep query reasonable length
