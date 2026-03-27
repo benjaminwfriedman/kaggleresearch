@@ -69,6 +69,9 @@ class ResearchConfig:
     # Metric
     metric_direction: str = "higher_better"
 
+    # Re-research
+    max_reresearch_attempts: int = 2
+
 
 def do_initial_literature_review(
     config: ResearchConfig,
@@ -371,7 +374,7 @@ def run_reresearch(
         return ("pivot", checkpoint)
 
     # no_new_ideas - try Attempt 2
-    if should_attempt_reresearch(checkpoint.reresearch_attempts + 1, max_attempts=2):
+    if should_attempt_reresearch(checkpoint.reresearch_attempts + 1, max_attempts=config.max_reresearch_attempts):
         print("\n  Attempt 2: Re-reading papers with failure context...")
         checkpoint.reresearch_attempts += 1
 

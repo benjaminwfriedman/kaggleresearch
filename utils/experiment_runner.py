@@ -43,7 +43,7 @@ def implement_idea(
     train_py_path: Path,
     strategy_md_path: Path,
     client: Any,  # Anthropic client
-    max_retries: int = 2
+    max_retries: int = 3
 ) -> str:
     """
     Use LLM to implement an idea by modifying train.py.
@@ -130,18 +130,40 @@ CRITICAL: Return the COMPLETE modified train.py file. The output must:
         has_name_check = 'if __name__' in response
         reasonable_length = len(response) > original_chars * 0.5
 
-        if has_main and has_name_check and reasonable_length:
+        # Check for syntax errors
+        syntax_error = None
+        try:
+            compile(response, '<train.py>', 'exec')
+        except SyntaxError as e:
+            syntax_error = e
+
+        if has_main and has_name_check and reasonable_length and syntax_error is None:
             return response
 
         if attempt < max_retries:
-            print(f"  Code generation attempt {attempt + 1} incomplete (main={has_main}, __name__={has_name_check}, len={len(response)}/{original_chars}). Retrying...")
-            # Add explicit retry prompt
-            user_prompt = f"""Your previous response was incomplete. It was missing:
-{'' if has_main else '- def main(): function'}
-{'' if has_name_check else '- if __name__ == "__main__": block'}
-{'' if reasonable_length else f'- Response too short ({len(response)} chars vs {original_chars} expected)'}
+            # Build error message
+            issues = []
+            if not has_main:
+                issues.append("- Missing def main(): function")
+            if not has_name_check:
+                issues.append("- Missing if __name__ == \"__main__\": block")
+            if not reasonable_length:
+                issues.append(f"- Response too short ({len(response)} chars vs {original_chars} expected)")
+            if syntax_error:
+                issues.append(f"- SYNTAX ERROR: {syntax_error}")
+                # Extract the problematic line for context
+                lines = response.split('\n')
+                if syntax_error.lineno and syntax_error.lineno <= len(lines):
+                    error_line = lines[syntax_error.lineno - 1]
+                    issues.append(f"  Line {syntax_error.lineno}: {error_line[:100]}")
 
-Please try again. Here is the current train.py ({original_lines} lines):
+            print(f"  Code generation attempt {attempt + 1} failed: {'; '.join(issues)[:100]}. Retrying...")
+
+            # Add explicit retry prompt with syntax error context
+            user_prompt = f"""Your previous response had errors:
+{chr(10).join(issues)}
+
+Please fix these issues and try again. Here is the current train.py ({original_lines} lines):
 
 ```python
 {current_train_py}
@@ -150,7 +172,13 @@ Please try again. Here is the current train.py ({original_lines} lines):
 IDEA to implement:
 {idea_text}
 
-Return the COMPLETE file with ALL code including def main() and if __name__ == "__main__":"""
+CRITICAL: Ensure your output:
+1. Is valid Python with NO syntax errors
+2. Contains def main(): function
+3. Contains if __name__ == "__main__": block
+4. Is the COMPLETE file (not truncated)
+
+Return the COMPLETE, SYNTACTICALLY VALID Python code:"""
 
     return response
 
