@@ -32,7 +32,7 @@ from .experiment_runner import (
     session_timeout_imminent, generate_experiment_id, get_file_hash,
     ExperimentLog, backup_train_py, restore_train_py
 )
-from .branching import get_current_branch, git_checkout, get_current_commit
+from .branching import get_current_branch, git_checkout, get_current_commit, export_best_results
 from .idea_tree import IdeaTree
 from .literature import (
     search_papers, cache_papers, load_cached_papers,
@@ -810,13 +810,34 @@ def run_research(
         tree.save()
         save_checkpoint(config.checkpoint_path, checkpoint)
 
-    print(f"\n=== Research Loop Complete ===")
-    print(f"Final best score: {checkpoint.best_score:.6f}")
-    print(f"Improvement from baseline: {checkpoint.best_score - checkpoint.baseline_score:+.6f}")
-    print(f"Tree nodes explored: {len(tree.nodes)}")
-    print(f"Exit reason: {exit_reason}")
-    print(f"\nExploration Tree:")
-    print(tree.render_tree(config.metric_direction))
+        # Always export best results, even on interrupt
+        print(f"\n=== Research Loop Complete ===")
+        print(f"Final best score: {checkpoint.best_score:.6f}")
+        print(f"Improvement from baseline: {checkpoint.best_score - checkpoint.baseline_score:+.6f}")
+        print(f"Tree nodes explored: {len(tree.nodes)}")
+        print(f"Exit reason: {exit_reason}")
+        print(f"\nExploration Tree:")
+        print(tree.render_tree(config.metric_direction))
+
+        # Export best results to project directory
+        print(f"\n=== Exporting Best Results ===")
+        export_result = export_best_results(
+            config.repo_dir,
+            config.project_dir / 'best_results',
+            config.metric_direction
+        )
+
+        if export_result.get('success'):
+            print(f"Best score: {export_result.get('score', 'N/A')}")
+            print(f"From commit: {export_result.get('commit', 'N/A')}")
+            if export_result.get('train_py_path'):
+                print(f"Best train.py: {export_result['train_py_path']}")
+            if export_result.get('submission_path'):
+                print(f"Best submission: {export_result['submission_path']}")
+            if export_result.get('submission_note'):
+                print(f"  Note: {export_result['submission_note']}")
+        else:
+            print(f"Failed to export best results: {export_result.get('error', 'Unknown error')}")
 
     return ResearchResult(
         final_score=checkpoint.best_score,

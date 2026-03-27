@@ -389,3 +389,163 @@ def get_next_branch_version(repo_path: Path) -> int:
                 pass
 
     return max_version + 1
+
+
+def get_file_at_commit(repo_path: Path, commit_sha: str, file_path: str) -> Optional[str]:
+    """
+    Retrieve file contents from a specific commit.
+
+    Args:
+        repo_path: Path to the repository
+        commit_sha: Commit SHA to retrieve from
+        file_path: Relative path to the file within the repo
+
+    Returns:
+        File contents as string, or None if not found
+    """
+    success, output = run_git_command(repo_path, 'show', f'{commit_sha}:{file_path}')
+
+    if success:
+        return output
+
+    return None
+
+
+def find_best_improvement_commit(repo_path: Path) -> Optional[Dict[str, Any]]:
+    """
+    Find the commit with the best improvement score.
+
+    Searches git log for commits with "IMPROVE" in the message and extracts
+    the score from the commit message format: "IMPROVE [...]: title | old -> new"
+
+    Args:
+        repo_path: Path to the repository
+
+    Returns:
+        Dict with 'commit', 'score', 'message' or None if no improvements found
+    """
+    import re
+
+    success, output = run_git_command(
+        repo_path, 'log', '--all', '--grep=IMPROVE',
+        '--pretty=format:%H|%s'
+    )
+
+    if not success or not output:
+        return None
+
+    best_commit = None
+    best_score = float('-inf')
+
+    for line in output.split('\n'):
+        if '|' not in line:
+            continue
+
+        parts = line.split('|', 1)
+        commit_sha = parts[0]
+        message = parts[1] if len(parts) > 1 else ''
+
+        # Extract score from message format: "... | 0.8373 -> 0.8440"
+        score_match = re.search(r'-> ([\d.]+)$', message)
+        if score_match:
+            try:
+                score = float(score_match.group(1))
+                if score > best_score:
+                    best_score = score
+                    best_commit = {
+                        'commit': commit_sha,
+                        'score': score,
+                        'message': message
+                    }
+            except ValueError:
+                continue
+
+    return best_commit
+
+
+def export_best_results(
+    repo_path: Path,
+    output_dir: Path,
+    metric_direction: str = "higher_better"
+) -> Dict[str, Any]:
+    """
+    Export the best performing train.py and submission.csv to output directory.
+
+    Args:
+        repo_path: Path to the repository
+        output_dir: Directory to export results to
+        metric_direction: "higher_better" or "lower_better"
+
+    Returns:
+        Dict with 'success', 'score', 'train_py_path', 'submission_path', 'commit'
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find best commit
+    best = find_best_improvement_commit(repo_path)
+
+    if not best:
+        # No improvements found, use current HEAD
+        success, current_commit = run_git_command(repo_path, 'rev-parse', 'HEAD')
+        if not success:
+            return {'success': False, 'error': 'No commits found'}
+
+        # Copy current files
+        train_src = repo_path / 'train.py'
+        submission_src = repo_path / 'submissions' / 'submission.csv'
+
+        result = {
+            'success': True,
+            'score': None,
+            'commit': current_commit[:8],
+            'message': 'Current HEAD (no improvements recorded)'
+        }
+
+        if train_src.exists():
+            train_dst = output_dir / 'best_train.py'
+            shutil.copy(train_src, train_dst)
+            result['train_py_path'] = str(train_dst)
+
+        if submission_src.exists():
+            submission_dst = output_dir / 'best_submission.csv'
+            shutil.copy(submission_src, submission_dst)
+            result['submission_path'] = str(submission_dst)
+
+        return result
+
+    # Extract files from best commit
+    commit_sha = best['commit']
+
+    train_content = get_file_at_commit(repo_path, commit_sha, 'train.py')
+    submission_content = get_file_at_commit(repo_path, commit_sha, 'submissions/submission.csv')
+
+    result = {
+        'success': True,
+        'score': best['score'],
+        'commit': commit_sha[:8],
+        'message': best['message']
+    }
+
+    if train_content:
+        train_path = output_dir / 'best_train.py'
+        with open(train_path, 'w') as f:
+            f.write(train_content)
+        result['train_py_path'] = str(train_path)
+
+    if submission_content:
+        submission_path = output_dir / 'best_submission.csv'
+        with open(submission_path, 'w') as f:
+            f.write(submission_content)
+        result['submission_path'] = str(submission_path)
+    else:
+        # Submission might not have been committed (older runs)
+        # Try to get it from current working directory as fallback
+        current_submission = repo_path / 'submissions' / 'submission.csv'
+        if current_submission.exists():
+            submission_path = output_dir / 'best_submission.csv'
+            shutil.copy(current_submission, submission_path)
+            result['submission_path'] = str(submission_path)
+            result['submission_note'] = 'From working directory (not from git)'
+
+    return result

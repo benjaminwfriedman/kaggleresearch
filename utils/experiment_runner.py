@@ -342,20 +342,42 @@ def run_experiment(
         return None, f"Experiment error: {str(e)}"
 
 
-def git_commit(repo_path: Path, message: str) -> bool:
+def git_commit(repo_path: Path, message: str, include_submission: bool = True) -> bool:
     """
     Commit current changes with the given message.
 
     Args:
         repo_path: Path to the repo
         message: Commit message
+        include_submission: Whether to include submission.csv in the commit
 
     Returns:
         True if successful
     """
-    success, _ = run_git_command(repo_path, 'add', '-A')
+    repo_path = Path(repo_path)
+
+    # Check if this is the first commit (no commits yet)
+    has_commits, _ = run_git_command(repo_path, 'rev-parse', 'HEAD')
+
+    if not has_commits:
+        # First commit - add everything
+        print("  Creating initial git commit...")
+        run_git_command(repo_path, 'add', '-A')
+        success, _ = run_git_command(repo_path, 'commit', '-m', 'Initial commit: baseline')
+        if not success:
+            return False
+
+    # Add train.py
+    success, _ = run_git_command(repo_path, 'add', 'train.py')
     if not success:
         return False
+
+    # Explicitly add submission.csv if it exists (even if gitignored)
+    if include_submission:
+        submission_path = repo_path / 'submissions' / 'submission.csv'
+        if submission_path.exists():
+            # Use -f to force add even if gitignored
+            run_git_command(repo_path, 'add', '-f', 'submissions/submission.csv')
 
     success, _ = run_git_command(repo_path, 'commit', '-m', message)
     return success
