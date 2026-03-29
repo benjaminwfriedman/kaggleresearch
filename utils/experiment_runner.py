@@ -598,7 +598,7 @@ def generate_baseline(
     id_column: str,
     client: Any,
     max_retries: int = 2
-) -> Tuple[str, str]:
+) -> Tuple[str, str, str]:
     """
     Generate a baseline train.py using the LLM based on data inspection.
 
@@ -613,7 +613,8 @@ def generate_baseline(
         max_retries: Number of retries if generation fails
 
     Returns:
-        Tuple of (train_py_content, problem_type)
+        Tuple of (train_py_content, problem_type, metric_direction)
+        Note: metric_direction may be updated by LLM if it infers differently
     """
     from .data_inspector import inspect_competition_data, format_inspection_for_prompt
 
@@ -622,12 +623,12 @@ def generate_baseline(
     inspection = inspect_competition_data(data_dir, metric)
     data_structure = format_inspection_for_prompt(inspection)
 
-    # Step 1: Determine problem type
+    # Step 1: Determine problem type and metric direction
     print("  Determining problem type...")
-    problem_type_prompt = f"""Based on the following competition information, determine the problem type.
+    problem_type_prompt = f"""Based on the following competition information, determine the problem type and metric direction.
 
 **Competition:** {competition_name}
-**Metric:** {metric} ({metric_direction})
+**Metric:** {metric}
 
 **Data Structure:**
 {data_structure}
@@ -678,14 +679,39 @@ Classify this as ONE of the following problem types:
 - reinforcement-learning
 - other
 
-Respond with ONLY the problem type (e.g., "image-multi-target-regression"), nothing else."""
+Also determine the metric direction:
+- "higher_better" for metrics like accuracy, F1, AUC, R², MAP, etc.
+- "lower_better" for metrics like RMSE, MSE, MAE, log loss, error, etc.
+
+Respond in this exact format (two lines):
+problem_type: <type>
+metric_direction: <higher_better or lower_better>"""
 
     type_response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=50,
+        max_tokens=100,
         messages=[{"role": "user", "content": problem_type_prompt}]
     )
-    problem_type = type_response.content[0].text.strip().lower()
+    response_text = type_response.content[0].text.strip()
+
+    # Parse response
+    problem_type = "other"
+    inferred_metric_direction = metric_direction  # default to passed-in value
+
+    for line in response_text.split('\n'):
+        line = line.strip().lower()
+        if line.startswith('problem_type:'):
+            problem_type = line.split(':', 1)[1].strip()
+        elif line.startswith('metric_direction:'):
+            direction = line.split(':', 1)[1].strip()
+            if direction in ('higher_better', 'lower_better'):
+                inferred_metric_direction = direction
+
+    # Update metric_direction if LLM determined it differently
+    if inferred_metric_direction != metric_direction:
+        print(f"  LLM inferred metric direction: {inferred_metric_direction} (was: {metric_direction})")
+        metric_direction = inferred_metric_direction
+
     print(f"  Problem type: {problem_type}")
 
     # Step 2: Load the baseline generator prompt
@@ -742,7 +768,7 @@ Generate the train.py now:"""
             # Try to compile to check syntax
             try:
                 compile(response, '<train.py>', 'exec')
-                return response, problem_type
+                return response, problem_type, metric_direction
             except SyntaxError as e:
                 print(f"  Syntax error: {e}")
                 if attempt < max_retries:
@@ -762,4 +788,4 @@ Remember to include def main() and if __name__ == "__main__":"""
 Please generate the COMPLETE train.py file."""
 
     # Return whatever we have on last attempt
-    return response, problem_type
+    return response, problem_type, metric_direction
